@@ -13,7 +13,7 @@ type Dict = Record<string, string>;
 const EN: Dict = {
   // brand / login
   "brand.tagline": "operations terminal",
-  "login.headline.1": "ClawMail",
+  "login.headline.1": "ClawEmail",
   "login.headline.2": "admin console",
   "login.headline.3": "",
   "login.pitch":
@@ -224,7 +224,7 @@ const EN: Dict = {
 
 const ZH: Dict = {
   "brand.tagline": "操作终端",
-  "login.headline.1": "ClawMail",
+  "login.headline.1": "ClawEmail",
   "login.headline.2": "管理后台",
   "login.headline.3": "",
   "login.pitch":

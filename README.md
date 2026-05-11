@@ -1,4 +1,4 @@
-# Claw Email Web Manager
+# ClawEmail Web Manager
 
 基于 `claw.163.com` 的 **子邮箱批量管理 / 实时收发** 一体化前后端。
 通过 Web UI 验证码登录 Claw，自动派生 Dashboard Cookie 与 API Key，为每个子邮箱维持长连接监听，新邮件实时入库并经 SSE 推送给前端，可在线发件、回复、删除（远端 + 本地双删）、下载附件。

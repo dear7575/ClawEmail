@@ -432,7 +432,7 @@ export function App() {
                 <section className="stage">
                     <div className="brand-row">
                         <span className="mark">C</span>
-                        <span className="brand-name">ClawMail</span>
+                        <span className="brand-name">ClawEmail</span>
                         <span className="version">v0.1</span>
                     </div>
                     <div className="pitch">
