@@ -612,7 +612,7 @@ a:hover {
 }
 
 .login-shell .pitch {
-    transform: translate(326px, -128px);
+    transform: translate(200px, -65px);
 }
 
 .login-shell .brand-row {
@@ -675,7 +675,7 @@ a:hover {
 }
 
 .login-form {
-    transform: translate(-252px, 306px);
+    transform: translate(-97px, 232px);
     align-self: center;
     margin: 32px 32px 32px 0;
     border: 1px solid var(--border);
