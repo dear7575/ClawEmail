@@ -37,6 +37,13 @@ function ruleLabel(mailbox: Mailbox, t: (key: string) => string): string {
   return t("mb.rules.unknown");
 }
 
+function statusLabel(status: string, t: (key: string) => string): string {
+  if (status === "active") return t("mb.status.active");
+  if (status === "deleted") return t("mb.status.deleted");
+  if (status === "disabled") return t("mb.status.disabled");
+  return status || t("mb.status.unknown");
+}
+
 export function MailboxesView({
   mailboxes,
   clawAuth,
@@ -119,7 +126,7 @@ export function MailboxesView({
               <div>
                 <span className={`tag ${mailbox.status === "active" ? "ok" : "muted"}`}>
                   <span className={`dot ${mailbox.status === "active" ? "live" : ""}`} />
-                  {mailbox.status}
+                  {statusLabel(mailbox.status, t)}
                 </span>
               </div>
               <div>

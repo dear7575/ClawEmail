@@ -84,3 +84,32 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS duck_accounts (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  token TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  last_error TEXT,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_duck_accounts_status ON duck_accounts(status);
+
+CREATE TABLE IF NOT EXISTS duck_addresses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL,
+  address TEXT NOT NULL UNIQUE,
+  local_part TEXT NOT NULL,
+  forwarding_mailbox_email TEXT,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  raw_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(account_id) REFERENCES duck_accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_duck_addresses_account_id ON duck_addresses(account_id);
+CREATE INDEX IF NOT EXISTS idx_duck_addresses_status ON duck_addresses(status);

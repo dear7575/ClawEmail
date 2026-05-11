@@ -30,7 +30,7 @@ src/
 | 模块 | 能力 | 实现位置 |
 |---|---|---|
 | Claw 绑定 | 邮箱 + 验证码两步登录；自动取 `auth/me` / `workspaces` / `mailboxes` / `api-keys`；写入 SQLite | `routes/claw-auth.ts`、`runtime-config.ts` |
-| 邮箱管理 | 创建（前缀 `^[a-z0-9]{1,32}$`）、列表、`?sync=true` 与远端做差量同步、删除（拒绝删主邮箱） | `routes/mailboxes.ts`、`claw-dashboard.ts` |
+| Claw 邮箱 | 创建（前缀 `^[a-z0-9]{1,32}$`）、列表、`?sync=true` 与远端做差量同步、删除（拒绝删主邮箱） | `routes/mailboxes.ts`、`claw-dashboard.ts` |
 | 通讯规则 | 同步并保存 `commLevel` / `extReceiveType` / `extSendType`；邮箱页可配置个人 / 内部 / 外部通信范围 | `routes/mailboxes.ts`、`CommunicationRulesDrawer.tsx` |
 | 实时收件 | 每个 `active` 邮箱一条 WS 监听；落库为 `mails` + `attachments`；SSE `event: mail` 推送 | `listener-manager.ts`、`sse.ts` |
 | 收件同步 | `GET /api/mails?sync=true`：远端 INBOX `id` 列表 → 删本地多余、补本地缺失 | `routes/mails.ts` |
@@ -40,6 +40,7 @@ src/
 | 回信 | 基于本地 `mailId` 反查 `provider_mail_id` 调 SDK | `routes/send.ts` |
 | 附件下载 | 不缓存原始字节，按需经 SDK 流式拉取 | `routes/mails.ts` |
 | 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `routes/events.ts`、`ListenersDrawer.tsx` |
+| Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `routes/duck.ts`、`duck-email.ts`、`App.tsx` |
 | 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `i18n.tsx`、`hooks.ts` |
 
 ## 2. Claw 验证码登录链
@@ -126,6 +127,17 @@ POST   /api/reply                             # { mailId, body?, html?, toAll? }
 
 GET    /api/events                            # SSE: event: mail
 GET    /api/listeners
+GET    /api/listener-settings                 # { logMode, reconnectMode }
+PUT    /api/listener-settings                 # { logMode: quiet|lifecycle|verbose, reconnectMode: standard|slow }
+
+GET    /api/duck/accounts
+POST   /api/duck/accounts              # { label, token }，token 可填 "Bearer xxx" 或 "xxx"
+PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保留地址记录
+DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
+GET    /api/duck/addresses?accountId=
+POST   /api/duck/accounts/:id/addresses # { forwardingMailboxEmail?, note? }
+PATCH  /api/duck/addresses/:id          # { forwardingMailboxEmail?, note? }
+DELETE /api/duck/addresses/:id          # 删除本地生成记录，不调用 DuckDuckGo 远端
 ```
 
 请求样例：
@@ -166,9 +178,28 @@ mailboxes      子邮箱：id / email(unique) / prefix / status / install_comman
 mails          邮件：mailbox_email + provider_mail_id 联合唯一，含 raw_json 全文
 attachments    附件元数据：mail_id 外键 → mails.id（ON DELETE CASCADE）
 app_settings   key/value，存 Claw 凭据
+duck_accounts  DuckDuckGo Email Protection Token（仅后端使用，API 返回时脱敏）
+duck_addresses 已生成的 Private Duck Address、备注、预期转发目标和原始响应
 ```
 
 附件二进制**不入库**，下载时调 `client.mail.getAttachment` 流式回传给浏览器。
+
+## 5.1 DuckDuckGo Email Protection 集成边界
+
+Duck 邮箱是 DuckDuckGo Email Protection 的转发邮箱，官方没有提供稳定公开的第三方 API 文档；本项目只封装社区常用的邮箱生成请求：
+
+```http
+POST https://quack.duckduckgo.com/api/email/addresses
+Authorization: Bearer <DDG_TOKEN>
+```
+
+成功响应通常为：
+
+```json
+{ "address": "example-private-address" }
+```
+
+本项目会规范化保存为 `example-private-address@duck.com`。Duck Token 属于敏感凭据，只保存在后端数据库中，前端只显示前后缀掩码。当前版本只支持**生成与本地记录**，不承诺远端停用、变更转发目标或读取 Duck 收件箱；Duck 邮箱没有独立收件箱，邮件会转发到你在 DuckDuckGo 里配置的真实邮箱。
 
 ## 6. 监听器与重连
 

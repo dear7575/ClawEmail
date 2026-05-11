@@ -10,6 +10,7 @@ import { mailRoutes } from "./routes/mails";
 import { sendRoutes } from "./routes/send";
 import { eventRoutes } from "./routes/events";
 import { clawAuthRoutes } from "./routes/claw-auth";
+import { duckRoutes } from "./routes/duck";
 import { startAllMailboxListeners } from "./listener-manager";
 import { hasClawMailConfig } from "./runtime-config";
 
@@ -52,6 +53,7 @@ await mailRoutes(app);
 await sendRoutes(app);
 await eventRoutes(app);
 await clawAuthRoutes(app);
+await duckRoutes(app);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webRoot = join(__dirname, "../web");

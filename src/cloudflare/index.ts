@@ -22,9 +22,13 @@ import {
 } from "./claw-mail";
 import {
   deleteSettings,
+  createDuckAccount,
+  deleteDuckAddress,
   deleteMailById,
   deleteMailsByProviderIds,
+  deleteDuckAccount,
   ensureSchema,
+  getDuckAccountById,
   getMailboxByEmail,
   getMailboxById,
   getMailById,
@@ -32,14 +36,21 @@ import {
   getSetting,
   listActiveMailboxes,
   listAttachments,
+  listDuckAccounts,
+  listDuckAddresses,
   listMailboxes,
   listMailProviderIds,
   listMails,
+  markDuckAccountError,
+  markDuckAccountUsed,
   markMailboxDeleted,
   markMailboxesMissingDeleted,
   saveMail,
+  saveDuckAddress,
   setSetting,
   upsertMailbox,
+  updateDuckAccountToken,
+  updateDuckAddress,
   updateMailboxCommSettings
 } from "./db";
 import {
@@ -102,6 +113,16 @@ const commSettingsSchema = z.object({
   }
 });
 
+const listenerSettingsSchema = z.object({
+  logMode: z.enum(["quiet", "lifecycle", "verbose"]).optional(),
+  reconnectMode: z.enum(["standard", "slow"]).optional()
+});
+
+const DEFAULT_LISTENER_SETTINGS = {
+  logMode: "quiet",
+  reconnectMode: "standard"
+} as const;
+
 const sendSchema = z.object({
   from: z.string().email(),
   to: z.array(z.string().email()).min(1),
@@ -130,6 +151,29 @@ const sendCodeSchema = z.object({
   email: clawLoginEmailSchema
 });
 
+const duckAccountSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  token: z.string().trim().min(12)
+});
+
+const duckAccountTokenSchema = z.object({
+  token: z.string().trim().min(12)
+});
+
+const duckAddressListSchema = z.object({
+  accountId: z.string().min(1).optional()
+});
+
+const duckAddressCreateSchema = z.object({
+  forwardingMailboxEmail: z.string().email().optional().or(z.literal("")),
+  note: z.string().trim().max(300).optional()
+});
+
+const duckAddressUpdateSchema = z.object({
+  forwardingMailboxEmail: z.string().email().optional().or(z.literal("")).nullable(),
+  note: z.string().trim().max(300).optional().nullable()
+});
+
 const verifyCodeSchema = z.object({
   email: clawLoginEmailSchema,
   code: z.string().trim().regex(/^\d+$/)
@@ -146,6 +190,14 @@ const routes: Route[] = [
   route("POST", "/api/connections/verify-code", authVerifyCode),
   route("POST", "/api/connections/:id/refresh", authRefresh),
   route("POST", "/api/connections/:id/logout", authLogout),
+  route("GET", "/api/duck/accounts", duckAccountsList),
+  route("POST", "/api/duck/accounts", duckAccountsCreate),
+  route("PATCH", "/api/duck/accounts/:id", duckAccountsUpdate),
+  route("DELETE", "/api/duck/accounts/:id", duckAccountsDelete),
+  route("GET", "/api/duck/addresses", duckAddressesList),
+  route("POST", "/api/duck/accounts/:id/addresses", duckAddressesCreate),
+  route("PATCH", "/api/duck/addresses/:id", duckAddressesUpdate),
+  route("DELETE", "/api/duck/addresses/:id", duckAddressesDelete),
   route("GET", "/api/auth/claw/status", authStatus),
   route("POST", "/api/auth/claw/send-code", authSendCode),
   route("POST", "/api/auth/claw/verify-code", authVerifyCode),
@@ -162,7 +214,9 @@ const routes: Route[] = [
   route("POST", "/api/send", sendCreate),
   route("POST", "/api/reply", sendReply),
   route("GET", "/api/events", eventsStream),
-  route("GET", "/api/listeners", listenersList)
+  route("GET", "/api/listeners", listenersList),
+  route("GET", "/api/listener-settings", listenerSettingsGet),
+  route("PUT", "/api/listener-settings", listenerSettingsUpdate)
 ];
 
 function route(method: string, path: string, handler: Handler): Route {
@@ -380,6 +434,69 @@ async function authStatus({ env }: { env: Env }) {
   return json(await getClawAuthStatus(env));
 }
 
+function duckAccountId(): string {
+  return `duck:${crypto.randomUUID()}`;
+}
+
+function normalizeDuckToken(value: string): string {
+  return value.trim().replace(/^Bearer\s+/i, "").trim();
+}
+
+function normalizeOptionalEmail(value?: string | null): string | null {
+  const trimmed = value?.trim().toLowerCase();
+  return trimmed || null;
+}
+
+function normalizeDuckAddress(value: string): { address: string; localPart: string } {
+  const localPart = value.trim().toLowerCase().replace(/@duck\.com$/i, "");
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/i.test(localPart)) {
+    throw new Error("Duck API returned an invalid private address");
+  }
+  return {
+    address: `${localPart}@duck.com`,
+    localPart
+  };
+}
+
+async function generateDuckAddress(token: string): Promise<{
+  address: string;
+  localPart: string;
+  raw: unknown;
+}> {
+  const response = await fetch("https://quack.duckduckgo.com/api/email/addresses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${normalizeDuckToken(token)}`,
+      accept: "application/json"
+    }
+  });
+  const text = await response.text();
+  let body: unknown = null;
+  if (text.trim()) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error(`Duck address API returned non-JSON response: HTTP ${response.status}`);
+    }
+  }
+  if (!response.ok) {
+    const message = typeof body === "object" && body && "message" in body
+      ? String((body as { message?: unknown }).message)
+      : response.statusText || `HTTP ${response.status}`;
+    throw new Error(`Duck address API error: ${message}`);
+  }
+  const rawAddress = typeof body === "object" && body && "address" in body
+    ? (body as { address?: unknown }).address
+    : undefined;
+  if (typeof rawAddress !== "string" || !rawAddress.trim()) {
+    throw new Error("Duck address API response did not include address");
+  }
+  return {
+    ...normalizeDuckAddress(rawAddress),
+    raw: body
+  };
+}
+
 async function connectionsList({ env }: { env: Env }) {
   const status = await getClawAuthStatus(env);
   return json({
@@ -390,6 +507,115 @@ async function connectionsList({ env }: { env: Env }) {
       status: status.status ?? (status.connected ? "active" : "incomplete")
     }]
   });
+}
+
+async function duckAccountsList({ env }: { env: Env }) {
+  return json({ items: await listDuckAccounts(env.DB) });
+}
+
+async function duckAccountsCreate({ request, env }: { request: Request; env: Env }) {
+  const body = duckAccountSchema.parse(await readBody(request));
+  const account = await createDuckAccount(env.DB, {
+    id: duckAccountId(),
+    label: body.label,
+    token: normalizeDuckToken(body.token)
+  });
+  return json(account, { status: 201 });
+}
+
+async function duckAccountsDelete({ env, params }: { env: Env; params: Params }) {
+  if (!await deleteDuckAccount(env.DB, params.id)) {
+    return error("Duck account not found", 404);
+  }
+  return json({ success: true });
+}
+
+async function duckAccountsUpdate({
+  request,
+  env,
+  params
+}: {
+  request: Request;
+  env: Env;
+  params: Params;
+}) {
+  const body = duckAccountTokenSchema.parse(await readBody(request));
+  const account = await updateDuckAccountToken(env.DB, params.id, normalizeDuckToken(body.token));
+  if (!account) {
+    return error("Duck account not found", 404);
+  }
+  return json(account);
+}
+
+async function duckAddressesList({ env, url }: { env: Env; url: URL }) {
+  const query = duckAddressListSchema.parse(Object.fromEntries(url.searchParams));
+  return json({
+    items: await listDuckAddresses(env.DB, {
+      accountId: query.accountId
+    })
+  });
+}
+
+async function duckAddressesCreate({
+  request,
+  env,
+  params
+}: {
+  request: Request;
+  env: Env;
+  params: Params;
+}) {
+  const account = await getDuckAccountById(env.DB, params.id);
+  if (!account || account.status === "disabled" || !account.token) {
+    return error("Duck account not found or disabled", 404);
+  }
+  const body = duckAddressCreateSchema.parse(await readBody(request));
+  try {
+    const generated = await generateDuckAddress(account.token);
+    const row = await saveDuckAddress(env.DB, {
+      accountId: account.id,
+      address: generated.address,
+      localPart: generated.localPart,
+      forwardingMailboxEmail: normalizeOptionalEmail(body.forwardingMailboxEmail),
+      note: body.note ?? null,
+      rawJson: JSON.stringify(generated.raw)
+    });
+    await markDuckAccountUsed(env.DB, account.id);
+    return json(row, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markDuckAccountError(env.DB, account.id, message);
+    throw err;
+  }
+}
+
+async function duckAddressesUpdate({
+  request,
+  env,
+  params
+}: {
+  request: Request;
+  env: Env;
+  params: Params;
+}) {
+  const body = duckAddressUpdateSchema.parse(await readBody(request));
+  const row = await updateDuckAddress(env.DB, Number(params.id), {
+    forwardingMailboxEmail: body.forwardingMailboxEmail === undefined
+      ? undefined
+      : normalizeOptionalEmail(body.forwardingMailboxEmail),
+    note: body.note === undefined ? undefined : body.note ?? null
+  });
+  if (!row) {
+    return error("Duck address not found", 404);
+  }
+  return json(row);
+}
+
+async function duckAddressesDelete({ env, params }: { env: Env; params: Params }) {
+  if (!await deleteDuckAddress(env.DB, Number(params.id))) {
+    return error("Duck address not found", 404);
+  }
+  return json({ success: true });
 }
 
 async function authSendCode({ request, env }: { request: Request; env: Env }) {
@@ -595,6 +821,15 @@ async function listenersList({ env }: { env: Env }) {
       error: "Cloudflare deployment uses request-triggered inbox sync instead of persistent listeners."
     }))
   });
+}
+
+async function listenerSettingsGet() {
+  return json(DEFAULT_LISTENER_SETTINGS);
+}
+
+async function listenerSettingsUpdate({ request }: { request: Request }) {
+  listenerSettingsSchema.parse(await readBody(request));
+  return json(DEFAULT_LISTENER_SETTINGS);
 }
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {

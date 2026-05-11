@@ -91,6 +91,36 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS duck_accounts (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  token TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  last_error TEXT,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_duck_accounts_status ON duck_accounts(status);
+
+CREATE TABLE IF NOT EXISTS duck_addresses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL,
+  address TEXT NOT NULL UNIQUE,
+  local_part TEXT NOT NULL,
+  forwarding_mailbox_email TEXT,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  raw_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(account_id) REFERENCES duck_accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_duck_addresses_account_id ON duck_addresses(account_id);
+CREATE INDEX IF NOT EXISTS idx_duck_addresses_status ON duck_addresses(status);
 `);
 
 function ensureColumn(table: string, column: string, definition: string): void {
@@ -176,6 +206,35 @@ export type AttachmentRow = {
   content_type: string | null;
   size: number | null;
   created_at: string;
+};
+
+export type DuckAccountRow = {
+  id: string;
+  label: string;
+  token: string;
+  status: string;
+  last_error: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DuckAddressRow = {
+  id: number;
+  account_id: string;
+  address: string;
+  local_part: string;
+  forwarding_mailbox_email: string | null;
+  note: string | null;
+  status: string;
+  raw_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DuckAccountPublic = Omit<DuckAccountRow, "token"> & {
+  token_prefix: string | null;
+  token_suffix: string | null;
 };
 
 export function upsertConnection(input: {
@@ -596,6 +655,157 @@ export function deleteSettings(keys: string[]): void {
     }
   });
   transaction();
+}
+
+function maskDuckToken(row: DuckAccountRow): DuckAccountPublic {
+  const token = row.token.trim();
+  return {
+    id: row.id,
+    label: row.label,
+    status: row.status,
+    last_error: row.last_error,
+    last_used_at: row.last_used_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    token_prefix: token ? token.slice(0, 8) : null,
+    token_suffix: token ? token.slice(-4) : null
+  };
+}
+
+export function listDuckAccounts(): DuckAccountPublic[] {
+  return (db.prepare("SELECT * FROM duck_accounts WHERE status != 'disabled' ORDER BY created_at DESC").all() as DuckAccountRow[])
+    .map(maskDuckToken);
+}
+
+export function getDuckAccountById(id: string): DuckAccountRow | undefined {
+  return db.prepare("SELECT * FROM duck_accounts WHERE id = ?").get(id) as DuckAccountRow | undefined;
+}
+
+export function createDuckAccount(input: {
+  id: string;
+  label: string;
+  token: string;
+}): DuckAccountPublic {
+  db.prepare(`
+    INSERT INTO duck_accounts (id, label, token, status)
+    VALUES (@id, @label, @token, 'active')
+  `).run({
+    id: input.id,
+    label: input.label,
+    token: input.token
+  });
+  return maskDuckToken(getDuckAccountById(input.id)!);
+}
+
+export function updateDuckAccountToken(id: string, token: string): DuckAccountPublic | undefined {
+  db.prepare(`
+    UPDATE duck_accounts
+    SET token = ?, status = 'active', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(token, id);
+  const row = getDuckAccountById(id);
+  return row ? maskDuckToken(row) : undefined;
+}
+
+export function deleteDuckAccount(id: string): boolean {
+  const result = db.prepare("DELETE FROM duck_accounts WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+export function markDuckAccountUsed(id: string): void {
+  db.prepare(`
+    UPDATE duck_accounts
+    SET last_error = NULL, last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+}
+
+export function markDuckAccountError(id: string, error: string): void {
+  db.prepare(`
+    UPDATE duck_accounts
+    SET last_error = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(error, id);
+}
+
+export function listDuckAddresses(input: {
+  accountId?: string;
+} = {}): DuckAddressRow[] {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (input.accountId) {
+    where.push("account_id = ?");
+    params.push(input.accountId);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return db.prepare(`
+    SELECT * FROM duck_addresses ${whereSql}
+    ORDER BY created_at DESC, id DESC
+  `).all(...params) as DuckAddressRow[];
+}
+
+export function saveDuckAddress(input: {
+  accountId: string;
+  address: string;
+  localPart: string;
+  forwardingMailboxEmail?: string | null;
+  note?: string | null;
+  rawJson: string;
+}): DuckAddressRow {
+  db.prepare(`
+    INSERT INTO duck_addresses
+      (account_id, address, local_part, forwarding_mailbox_email, note, status, raw_json)
+    VALUES
+      (@accountId, @address, @localPart, @forwardingMailboxEmail, @note, 'active', @rawJson)
+    ON CONFLICT(address) DO UPDATE SET
+      account_id = excluded.account_id,
+      local_part = excluded.local_part,
+      forwarding_mailbox_email = excluded.forwarding_mailbox_email,
+      note = excluded.note,
+      status = 'active',
+      raw_json = excluded.raw_json,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    accountId: input.accountId,
+    address: input.address,
+    localPart: input.localPart,
+    forwardingMailboxEmail: input.forwardingMailboxEmail ?? null,
+    note: input.note ?? null,
+    rawJson: input.rawJson
+  });
+  return db.prepare("SELECT * FROM duck_addresses WHERE address = ?")
+    .get(input.address) as DuckAddressRow;
+}
+
+export function updateDuckAddress(
+  id: number,
+  input: {
+    forwardingMailboxEmail?: string | null;
+    note?: string | null;
+    status?: string | null;
+  }
+): DuckAddressRow | undefined {
+  const existing = db.prepare("SELECT * FROM duck_addresses WHERE id = ?").get(id) as DuckAddressRow | undefined;
+  if (!existing) return undefined;
+  db.prepare(`
+    UPDATE duck_addresses
+    SET forwarding_mailbox_email = @forwardingMailboxEmail,
+        note = @note,
+        status = @status,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id,
+    forwardingMailboxEmail: input.forwardingMailboxEmail ?? existing.forwarding_mailbox_email,
+    note: input.note ?? existing.note,
+    status: input.status ?? existing.status
+  });
+  return db.prepare("SELECT * FROM duck_addresses WHERE id = ?").get(id) as DuckAddressRow | undefined;
+}
+
+export function deleteDuckAddress(id: number): boolean {
+  const result = db.prepare("DELETE FROM duck_addresses WHERE id = ?").run(id);
+  return result.changes > 0;
 }
 
 function backfillLegacyConnection(): void {

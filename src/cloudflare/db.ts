@@ -1,4 +1,14 @@
-import type { D1Database, D1Value, MailboxRow, MailRow, AttachmentRow, ConnectionRow } from "./types";
+import type {
+  D1Database,
+  D1Value,
+  MailboxRow,
+  MailRow,
+  AttachmentRow,
+  ConnectionRow,
+  DuckAccountPublic,
+  DuckAccountRow,
+  DuckAddressRow
+} from "./types";
 
 let schemaReady: Promise<void> | null = null;
 
@@ -89,7 +99,37 @@ const SCHEMA_STATEMENTS = [
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `,
   `
+    CREATE TABLE IF NOT EXISTS duck_accounts (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      token TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_error TEXT,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  "CREATE INDEX IF NOT EXISTS idx_duck_accounts_status ON duck_accounts(status)",
+  `
+    CREATE TABLE IF NOT EXISTS duck_addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      address TEXT NOT NULL UNIQUE,
+      local_part TEXT NOT NULL,
+      forwarding_mailbox_email TEXT,
+      note TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      raw_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(account_id) REFERENCES duck_accounts(id) ON DELETE CASCADE
+    )
+  `,
+  "CREATE INDEX IF NOT EXISTS idx_duck_addresses_account_id ON duck_addresses(account_id)",
+  "CREATE INDEX IF NOT EXISTS idx_duck_addresses_status ON duck_addresses(status)"
 ];
 
 export const LEGACY_CONNECTION_ID = "legacy";
@@ -438,4 +478,166 @@ export async function deleteSettings(db: D1Database, keys: string[]): Promise<vo
   await db.batch(keys.map((key) =>
     db.prepare("DELETE FROM app_settings WHERE key = ?").bind(key)
   ));
+}
+
+function maskDuckToken(row: DuckAccountRow): DuckAccountPublic {
+  const token = row.token.trim();
+  return {
+    id: row.id,
+    label: row.label,
+    status: row.status,
+    last_error: row.last_error,
+    last_used_at: row.last_used_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    token_prefix: token ? token.slice(0, 8) : null,
+    token_suffix: token ? token.slice(-4) : null
+  };
+}
+
+export async function listDuckAccounts(db: D1Database): Promise<DuckAccountPublic[]> {
+  return (await all<DuckAccountRow>(db, "SELECT * FROM duck_accounts WHERE status != 'disabled' ORDER BY created_at DESC"))
+    .map(maskDuckToken);
+}
+
+export async function getDuckAccountById(db: D1Database, id: string): Promise<DuckAccountRow | undefined> {
+  return first<DuckAccountRow>(db, "SELECT * FROM duck_accounts WHERE id = ?", id);
+}
+
+export async function createDuckAccount(
+  db: D1Database,
+  input: {
+    id: string;
+    label: string;
+    token: string;
+  }
+): Promise<DuckAccountPublic> {
+  await db.prepare(`
+    INSERT INTO duck_accounts (id, label, token, status)
+    VALUES (?, ?, ?, 'active')
+  `).bind(input.id, input.label, input.token).run();
+  const row = await getDuckAccountById(db, input.id);
+  if (!row) throw new Error("failed to save Duck account");
+  return maskDuckToken(row);
+}
+
+export async function updateDuckAccountToken(
+  db: D1Database,
+  id: string,
+  token: string
+): Promise<DuckAccountPublic | undefined> {
+  await db.prepare(`
+    UPDATE duck_accounts
+    SET token = ?, status = 'active', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(token, id).run();
+  const row = await getDuckAccountById(db, id);
+  return row ? maskDuckToken(row) : undefined;
+}
+
+export async function deleteDuckAccount(db: D1Database, id: string): Promise<boolean> {
+  const result = await db.prepare("DELETE FROM duck_accounts WHERE id = ?").bind(id).run();
+  return rowChanges(result) > 0;
+}
+
+export async function markDuckAccountUsed(db: D1Database, id: string): Promise<void> {
+  await db.prepare(`
+    UPDATE duck_accounts
+    SET last_error = NULL, last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(id).run();
+}
+
+export async function markDuckAccountError(db: D1Database, id: string, error: string): Promise<void> {
+  await db.prepare(`
+    UPDATE duck_accounts
+    SET last_error = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(error, id).run();
+}
+
+export async function listDuckAddresses(
+  db: D1Database,
+  input: {
+    accountId?: string;
+  } = {}
+): Promise<DuckAddressRow[]> {
+  const where: string[] = [];
+  const params: D1Value[] = [];
+  if (input.accountId) {
+    where.push("account_id = ?");
+    params.push(input.accountId);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return all<DuckAddressRow>(
+    db,
+    `SELECT * FROM duck_addresses ${whereSql} ORDER BY created_at DESC, id DESC`,
+    ...params
+  );
+}
+
+export async function saveDuckAddress(
+  db: D1Database,
+  input: {
+    accountId: string;
+    address: string;
+    localPart: string;
+    forwardingMailboxEmail?: string | null;
+    note?: string | null;
+    rawJson: string;
+  }
+): Promise<DuckAddressRow> {
+  await db.prepare(`
+    INSERT INTO duck_addresses
+      (account_id, address, local_part, forwarding_mailbox_email, note, status, raw_json)
+    VALUES
+      (?, ?, ?, ?, ?, 'active', ?)
+    ON CONFLICT(address) DO UPDATE SET
+      account_id = excluded.account_id,
+      local_part = excluded.local_part,
+      forwarding_mailbox_email = excluded.forwarding_mailbox_email,
+      note = excluded.note,
+      status = 'active',
+      raw_json = excluded.raw_json,
+      updated_at = CURRENT_TIMESTAMP
+  `).bind(
+    input.accountId,
+    input.address,
+    input.localPart,
+    input.forwardingMailboxEmail ?? null,
+    input.note ?? null,
+    input.rawJson
+  ).run();
+  const row = await first<DuckAddressRow>(db, "SELECT * FROM duck_addresses WHERE address = ?", input.address);
+  if (!row) throw new Error("failed to save Duck address");
+  return row;
+}
+
+export async function updateDuckAddress(
+  db: D1Database,
+  id: number,
+  input: {
+    forwardingMailboxEmail?: string | null;
+    note?: string | null;
+    status?: string | null;
+  }
+): Promise<DuckAddressRow | undefined> {
+  const existing = await first<DuckAddressRow>(db, "SELECT * FROM duck_addresses WHERE id = ?", id);
+  if (!existing) return undefined;
+  await db.prepare(`
+    UPDATE duck_addresses
+    SET forwarding_mailbox_email = ?, note = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(
+    input.forwardingMailboxEmail ?? existing.forwarding_mailbox_email,
+    input.note ?? existing.note,
+    input.status ?? existing.status,
+    id
+  ).run();
+  return first<DuckAddressRow>(db, "SELECT * FROM duck_addresses WHERE id = ?", id);
+}
+
+export async function deleteDuckAddress(db: D1Database, id: number): Promise<boolean> {
+  const result = await db.prepare("DELETE FROM duck_addresses WHERE id = ?").bind(id).run();
+  return rowChanges(result) > 0;
 }

@@ -471,12 +471,11 @@ a:hover {
 
 .dot {
     display: inline-block;
+    flex: 0 0 auto;
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--text-4);
-    position: relative;
-    top: -1px;
 }
 
 .dot.live {
@@ -508,14 +507,18 @@ a:hover {
 .tag {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    min-height: 22px;
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--muted);
     color: var(--muted-foreground);
-    padding: 3px 8px;
+    padding: 0 8px;
     font-size: 11px;
     font-weight: 750;
+    line-height: 1;
+    vertical-align: middle;
 }
 
 .tag.ok {
@@ -577,6 +580,91 @@ a:hover {
 
 .divider-ascii {
     display: none;
+}
+
+.toast-stack {
+    position: fixed;
+    top: 78px;
+    right: 18px;
+    z-index: 160;
+    width: min(380px, calc(100vw - 32px));
+    display: grid;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card-strong);
+    color: var(--foreground);
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+    padding: 12px 10px 12px 12px;
+    font-size: 12px;
+    font-weight: 750;
+    line-height: 1.45;
+    animation: toast-in 180ms ease-out;
+    pointer-events: auto;
+}
+
+.toast span:nth-child(2) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.toast-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    background: var(--success);
+}
+
+.toast-success {
+    border-color: rgba(16, 185, 129, 0.28);
+}
+
+.toast-error {
+    border-color: rgba(220, 38, 38, 0.26);
+}
+
+.toast-error .toast-dot {
+    background: var(--danger);
+}
+
+.toast-close {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted-foreground);
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.toast-close:hover {
+    background: var(--muted);
+    color: var(--foreground);
+}
+
+@keyframes toast-in {
+    from {
+        transform: translateY(-6px);
+        opacity: 0;
+    }
+    to {
+        transform: none;
+        opacity: 1;
+    }
 }
 
 /* 登录页 */
@@ -702,11 +790,20 @@ a:hover {
     width: 100%;
 }
 
-.login-form .actions {
+.login-password-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-top: 18px;
+}
+
+.login-password-row input {
+    min-width: 0;
+    flex: 1;
+}
+
+.login-password-row button {
+    flex: 0 0 auto;
+    min-width: 88px;
 }
 
 /* 主界面 */
@@ -801,6 +898,12 @@ a:hover {
     display: grid;
     place-items: center;
     border-radius: 11px;
+}
+
+.top-icon svg {
+    width: 17px;
+    height: 17px;
+    stroke-width: 2.3;
 }
 
 [data-theme="dark"] .app-shell {
@@ -1223,6 +1326,7 @@ a:hover {
 
 .dashboard-page,
 .connections-page,
+.duck-page,
 .settings-page {
     display: grid;
     gap: 16px;
@@ -1288,6 +1392,57 @@ a:hover {
     margin-top: 7px;
     font-size: 24px;
     line-height: 1;
+}
+
+.settings-panel {
+    display: grid;
+    gap: 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    padding: 16px;
+}
+
+.settings-panel > div:first-child p {
+    margin: 5px 0 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.setting-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 14px;
+}
+
+.setting-row span {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.setting-row small {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.45;
+}
+
+.setting-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+}
+
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 14px;
 }
 
 .connection-bind {
@@ -1380,6 +1535,83 @@ a:hover {
     margin: 0;
     overflow-wrap: anywhere;
     font-weight: 700;
+}
+
+.duck-bind,
+.duck-generate {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) minmax(180px, 260px) minmax(220px, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    padding: 14px;
+}
+
+.duck-generate {
+    grid-template-columns: minmax(240px, 1fr) minmax(220px, 320px) minmax(220px, 1fr) auto;
+}
+
+.duck-bind p,
+.duck-generate p {
+    margin: 4px 0 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.duck-note-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    color: var(--muted-foreground);
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.duck-note-line label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.duck-table {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+}
+
+.duck-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(160px, 1fr) 180px 130px;
+    gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 13px 16px;
+}
+
+.duck-row:last-child {
+    border-bottom: 0;
+}
+
+.duck-row.head {
+    background: rgba(248, 250, 252, 0.74);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 850;
+}
+
+[data-theme="dark"] .duck-row.head {
+    background: rgba(30, 41, 59, 0.54);
 }
 
 .create-bar {
@@ -1865,6 +2097,14 @@ a:hover {
     white-space: nowrap;
 }
 
+.confirm-input {
+    margin: 14px 20px 0;
+}
+
+.confirm-input input {
+    width: 100%;
+}
+
 .confirm-actions {
     display: flex;
     justify-content: flex-end;
@@ -2168,12 +2408,18 @@ a:hover {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .connection-bind {
+    .connection-bind,
+    .duck-bind,
+    .duck-generate {
         grid-template-columns: minmax(220px, 1fr) minmax(220px, 320px);
     }
 
     .connection-bind .actions {
         justify-content: flex-start;
+    }
+
+    .duck-row {
+        grid-template-columns: minmax(200px, 1fr) minmax(150px, 220px) minmax(140px, 1fr) 150px 120px;
     }
 
     .mb-row {
@@ -2395,10 +2641,26 @@ a:hover {
         grid-template-columns: 1fr;
     }
 
-    .connection-bind {
+    .connection-bind,
+    .duck-bind,
+    .duck-generate {
         grid-template-columns: 1fr;
         align-items: stretch;
         border-radius: 18px;
+    }
+
+    .duck-note-line {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .setting-row {
+        grid-template-columns: 1fr;
+        align-items: flex-start;
+    }
+
+    .settings-actions {
+        justify-content: flex-start;
     }
 
     .login-name-field {
@@ -2518,15 +2780,18 @@ a:hover {
     }
 
     .mb-row,
+    .duck-row,
     .create-bar {
         grid-template-columns: 1fr;
     }
 
-    .mb-row.head {
+    .mb-row.head,
+    .duck-row.head {
         display: none;
     }
 
-    .mb-table {
+    .mb-table,
+    .duck-table {
         display: grid;
         gap: 10px;
         overflow: visible;
@@ -2536,7 +2801,8 @@ a:hover {
         box-shadow: none;
     }
 
-    .mb-row {
+    .mb-row,
+    .duck-row {
         gap: 10px;
         align-items: stretch;
         border: 1px solid var(--border);
@@ -2638,7 +2904,7 @@ a:hover {
         padding: 22px;
     }
 
-    .login-form .actions {
+    .login-password-row {
         align-items: stretch;
         flex-direction: column;
     }

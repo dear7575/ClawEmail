@@ -70,6 +70,36 @@ export type ListenerSnapshot = {
   error?: string | null;
 };
 
+export type ListenerSettings = {
+  logMode: "quiet" | "lifecycle" | "verbose";
+  reconnectMode: "standard" | "slow";
+};
+
+export type DuckAccount = {
+  id: string;
+  label: string;
+  status: string;
+  last_error: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  token_prefix: string | null;
+  token_suffix: string | null;
+};
+
+export type DuckAddress = {
+  id: number;
+  account_id: string;
+  address: string;
+  local_part: string;
+  forwarding_mailbox_email: string | null;
+  note: string | null;
+  status: string;
+  raw_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RuntimeMode = "node" | "cloudflare" | "unknown";
 
 let runtimeMode: RuntimeMode = "unknown";
@@ -307,4 +337,85 @@ export async function disconnectClaw(): Promise<ClawAuthStatus> {
 export async function fetchListeners(): Promise<ListenerSnapshot[]> {
   const data = await requestJson<{ items: ListenerSnapshot[] }>("/api/listeners");
   return data.items;
+}
+
+export async function fetchListenerSettings(): Promise<ListenerSettings> {
+  return requestJson<ListenerSettings>("/api/listener-settings");
+}
+
+export async function updateListenerSettings(input: ListenerSettings): Promise<ListenerSettings> {
+  return requestJson<ListenerSettings>("/api/listener-settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchDuckAccounts(): Promise<DuckAccount[]> {
+  const data = await requestJson<{ items: DuckAccount[] }>("/api/duck/accounts");
+  return data.items;
+}
+
+export async function createDuckAccount(input: {
+  label: string;
+  token: string;
+}): Promise<DuckAccount> {
+  return requestJson<DuckAccount>("/api/duck/accounts", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteDuckAccount(id: string): Promise<void> {
+  await requestJson<{ success: boolean }>(`/api/duck/accounts/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
+export async function updateDuckAccountToken(id: string, token: string): Promise<DuckAccount> {
+  return requestJson<DuckAccount>(`/api/duck/accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ token })
+  });
+}
+
+export async function fetchDuckAddresses(input: {
+  accountId?: string;
+} = {}): Promise<DuckAddress[]> {
+  const params = new URLSearchParams();
+  if (input.accountId) params.set("accountId", input.accountId);
+  const query = params.toString();
+  const data = await requestJson<{ items: DuckAddress[] }>(`/api/duck/addresses${query ? `?${query}` : ""}`);
+  return data.items;
+}
+
+export async function generateDuckAddress(
+  accountId: string,
+  input: {
+    forwardingMailboxEmail?: string;
+    note?: string;
+  } = {}
+): Promise<DuckAddress> {
+  return requestJson<DuckAddress>(`/api/duck/accounts/${encodeURIComponent(accountId)}/addresses`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateDuckAddress(
+  id: number,
+  input: {
+    forwardingMailboxEmail?: string | null;
+    note?: string | null;
+  }
+): Promise<DuckAddress> {
+  return requestJson<DuckAddress>(`/api/duck/addresses/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteDuckAddress(id: number): Promise<void> {
+  await requestJson<{ success: boolean }>(`/api/duck/addresses/${id}`, {
+    method: "DELETE"
+  });
 }

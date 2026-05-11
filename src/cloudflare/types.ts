@@ -104,3 +104,32 @@ export type ConnectionRow = {
   updated_at: string;
 };
 
+export type DuckAccountRow = {
+  id: string;
+  label: string;
+  token: string;
+  status: string;
+  last_error: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DuckAccountPublic = Omit<DuckAccountRow, "token"> & {
+  token_prefix: string | null;
+  token_suffix: string | null;
+};
+
+export type DuckAddressRow = {
+  id: number;
+  account_id: string;
+  address: string;
+  local_part: string;
+  forwarding_mailbox_email: string | null;
+  note: string | null;
+  status: string;
+  raw_json: string;
+  created_at: string;
+  updated_at: string;
+};
+

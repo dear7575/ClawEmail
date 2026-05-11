@@ -1,6 +1,7 @@
 import type { MailDetail } from "@clawemail/node-sdk";
 import { getMailClient, formatSdkError } from "./claw-mail";
 import { listActiveMailboxes, saveMail, type MailboxRow } from "./db";
+import { getListenerSettings } from "./listener-settings";
 import { hasClawMailConfig } from "./runtime-config";
 import { sseHub } from "./sse";
 
@@ -15,7 +16,19 @@ type ListenerState = {
 };
 
 const listeners = new Map<string, ListenerState>();
-const BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
+const RECONNECT_BACKOFF_MS = {
+  standard: [1000, 2000, 4000, 8000, 16000, 30000],
+  slow: [10000, 30000, 60000, 120000, 300000]
+} as const;
+
+function shouldLogLifecycle(): boolean {
+  return getListenerSettings().logMode !== "quiet";
+}
+
+function shouldLogConnectFailure(retry: number): boolean {
+  const settings = getListenerSettings();
+  return settings.logMode === "verbose" || retry === 0 || retry % 5 === 0;
+}
 
 function attachmentList(mail: MailDetail) {
   return (mail.attachments ?? []).map((attachment) => ({
@@ -69,24 +82,31 @@ async function connect(state: ListenerState): Promise<void> {
     client.ws.onDisconnect((reason) => {
       if (state.stopped) return;
       state.connected = false;
-      console.warn(`[listener:${state.email}] disconnected: ${reason}`);
+      if (shouldLogLifecycle()) {
+        console.warn(`[listener:${state.email}] disconnected: ${reason}`);
+      }
       scheduleReconnect(state);
     });
 
     await client.ws.connect();
     state.connected = true;
     state.retry = 0;
-    console.log(`[listener:${state.email}] connected`);
+    if (shouldLogLifecycle()) {
+      console.log(`[listener:${state.email}] connected`);
+    }
   } catch (error) {
     state.connected = false;
-    console.error(`[listener:${state.email}] connect failed`, formatSdkError(error));
+    if (shouldLogConnectFailure(state.retry)) {
+      console.error(`[listener:${state.email}] connect failed`, formatSdkError(error));
+    }
     scheduleReconnect(state);
   }
 }
 
 function scheduleReconnect(state: ListenerState): void {
   if (state.stopped || state.timer) return;
-  const delay = BACKOFF_MS[Math.min(state.retry, BACKOFF_MS.length - 1)];
+  const backoff = RECONNECT_BACKOFF_MS[getListenerSettings().reconnectMode];
+  const delay = backoff[Math.min(state.retry, backoff.length - 1)];
   state.retry += 1;
   state.timer = setTimeout(() => {
     state.timer = undefined;

@@ -4,22 +4,35 @@ import {ComposeDrawer} from "./components/ComposeDrawer";
 import {InboxView} from "./components/InboxView";
 import {ListenersDrawer} from "./components/ListenersDrawer";
 import {MailboxesView} from "./components/MailboxesView";
+import {Button} from "./components/ui/button";
+import {Dialog, DialogContent, DialogDescription, DialogTitle} from "./components/ui/dialog";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./components/ui/select";
 import {PrefsBar, usePrefs} from "./i18n";
+import {LogOut} from "lucide-react";
 import {
     type ClawAuthStatus,
     createEventSource,
+    createDuckAccount,
     createMailbox,
+    deleteDuckAddress,
     deleteMailbox,
     disconnectConnection,
+    deleteDuckAccount,
+    type DuckAccount,
+    type DuckAddress,
     fetchConnections,
+    fetchDuckAccounts,
+    fetchDuckAddresses,
+    fetchListenerSettings,
     fetchListeners,
     fetchMail,
     fetchMailboxes,
     fetchMails,
+    generateDuckAddress,
     getAdminPassword,
     getRuntimeMode,
     type ListenerSnapshot,
+    type ListenerSettings,
     type Mailbox,
     type MailDetail,
     type MailSummary,
@@ -27,21 +40,40 @@ import {
     sendConnectionLoginCode,
     setAdminPassword,
     setRuntimeMode,
+    updateDuckAccountToken,
+    updateListenerSettings,
     verifyAdminPassword,
     verifyConnectionLoginCode
 } from "./api";
 
-type View = "dashboard" | "connections" | "mailboxes" | "inbox" | "settings";
+type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "settings";
+type ToastItem = {
+    id: number;
+    type: "success" | "error";
+    message: string;
+};
+type ListenerStatusRefreshInterval = "manual" | "30" | "60" | "300";
+
 const VIEW_STORAGE_KEY = "claw.currentView";
+const LISTENER_RECONNECT_NOTICE_STORAGE_KEY = "claw.listener.reconnectNotice";
+const INBOX_AUTO_REFRESH_STORAGE_KEY = "claw.inbox.autoRefresh";
+const LISTENER_STATUS_REFRESH_STORAGE_KEY = "claw.listener.statusRefresh";
 const LIVE_LISTENER_STATUSES = new Set(["running", "open"]);
 const CLAW_LOGIN_NAME_PATTERN = /^[^\s@]+$/;
 const CLAW_LOGIN_DOMAIN = "@163.com";
 const ALL_SELECT_VALUE = "__all";
+const LISTENER_STATUS_REFRESH_MS: Record<ListenerStatusRefreshInterval, number | null> = {
+    manual: null,
+    "30": 30_000,
+    "60": 60_000,
+    "300": 300_000
+};
 
 function readInitialView(): View {
     if (typeof localStorage === "undefined") return "dashboard";
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
     return saved === "connections" || saved === "mailboxes" || saved === "inbox" || saved === "settings"
+        || saved === "duck"
         ? saved
         : "dashboard";
 }
@@ -50,11 +82,26 @@ function titleForView(view: View): string {
     const map: Record<View, string> = {
         dashboard: "仪表盘",
         connections: "连接管理",
-        mailboxes: "邮箱管理",
+        mailboxes: "Claw 邮箱",
+        duck: "Duck 邮箱",
         inbox: "收件管理",
-        settings: "设置"
+        settings: "系统设置"
     };
     return map[ view ];
+}
+
+function readBooleanPreference(key: string, fallback: boolean): boolean {
+    if (typeof localStorage === "undefined") return fallback;
+    const saved = localStorage.getItem(key);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+    return fallback;
+}
+
+function readListenerStatusRefreshInterval(): ListenerStatusRefreshInterval {
+    if (typeof localStorage === "undefined") return "manual";
+    const saved = localStorage.getItem(LISTENER_STATUS_REFRESH_STORAGE_KEY);
+    return saved === "30" || saved === "60" || saved === "300" ? saved : "manual";
 }
 
 function statusLabel(connection: ClawAuthStatus): string {
@@ -90,9 +137,20 @@ export function App() {
     const [selectedMailbox, setSelectedMailbox] = useState("");
     const [mails, setMails] = useState<MailSummary[]>([]);
     const [selectedMail, setSelectedMail] = useState<MailDetail | null>(null);
+    const [duckAccounts, setDuckAccounts] = useState<DuckAccount[]>([]);
+    const [duckAddresses, setDuckAddresses] = useState<DuckAddress[]>([]);
+    const [selectedDuckAccountId, setSelectedDuckAccountId] = useState("");
+    const [duckLabel, setDuckLabel] = useState("");
+    const [duckToken, setDuckToken] = useState("");
+    const [duckForwardingMailbox, setDuckForwardingMailbox] = useState("");
+    const [duckNote, setDuckNote] = useState("");
+    const [duckBusy, setDuckBusy] = useState(false);
+    const [duckAccountToRemove, setDuckAccountToRemove] = useState<DuckAccount | null>(null);
+    const [duckAccountToUpdate, setDuckAccountToUpdate] = useState<DuckAccount | null>(null);
+    const [duckAddressToDelete, setDuckAddressToDelete] = useState<DuckAddress | null>(null);
+    const [duckTokenUpdate, setDuckTokenUpdate] = useState("");
 
-    const [status, setStatus] = useState("");
-    const [error, setError] = useState("");
+    const [toasts, setToasts] = useState<ToastItem[]>([]);
 
     const [suffix, setSuffix] = useState("");
     const [mailboxSyncBusy, setMailboxSyncBusy] = useState(false);
@@ -107,6 +165,19 @@ export function App() {
     const [listenerItems, setListenerItems] = useState<ListenerSnapshot[]>([]);
     const [listenerBusy, setListenerBusy] = useState(false);
     const [listenersDrawerOpen, setListenersDrawerOpen] = useState(false);
+    const [showListenerReconnectNotice, setShowListenerReconnectNotice] = useState(() => (
+        readBooleanPreference(LISTENER_RECONNECT_NOTICE_STORAGE_KEY, false)
+    ));
+    const [inboxAutoRefresh, setInboxAutoRefresh] = useState(() => (
+        readBooleanPreference(INBOX_AUTO_REFRESH_STORAGE_KEY, true)
+    ));
+    const [listenerStatusRefreshInterval, setListenerStatusRefreshInterval] =
+        useState<ListenerStatusRefreshInterval>(readListenerStatusRefreshInterval);
+    const [serverListenerSettings, setServerListenerSettings] = useState<ListenerSettings>({
+        logMode: "quiet",
+        reconnectMode: "standard"
+    });
+    const [serverListenerSettingsBusy, setServerListenerSettingsBusy] = useState(false);
 
     const activeConnections = useMemo(
         () => connections.filter((connection) => connection.status !== "disconnected"),
@@ -114,8 +185,8 @@ export function App() {
     );
 
     const selectedConnection = useMemo(
-        () => connections.find((connection) => connection.id === selectedConnectionId) ?? activeConnections[ 0 ] ?? null,
-        [activeConnections, connections, selectedConnectionId]
+        () => connections.find((connection) => connection.id === selectedConnectionId) ?? null,
+        [connections, selectedConnectionId]
     );
 
     const activeMailboxes = useMemo(
@@ -124,16 +195,68 @@ export function App() {
     );
 
     const visibleMailboxes = useMemo(() => (
-        selectedConnection?.id
+        selectedConnection
             ? activeMailboxes.filter((mailbox) => mailbox.connection_id === selectedConnection.id)
             : activeMailboxes
-    ), [activeMailboxes, selectedConnection?.id]);
+    ), [activeMailboxes, selectedConnection]);
 
     const visibleListeners = useMemo(() => (
-        selectedConnection?.id
+        selectedConnection
             ? listenerItems.filter((item) => item.connectionId === selectedConnection.id)
             : listenerItems
-    ), [listenerItems, selectedConnection?.id]);
+    ), [listenerItems, selectedConnection]);
+
+    const activeDuckAccounts = useMemo(
+        () => duckAccounts.filter((account) => account.status !== "disabled"),
+        [duckAccounts]
+    );
+
+    const selectedDuckAccount = useMemo(
+        () => duckAccounts.find((account) => account.id === selectedDuckAccountId) ?? null,
+        [duckAccounts, selectedDuckAccountId]
+    );
+
+    const visibleDuckAddresses = useMemo(() => {
+        return selectedDuckAccount?.id
+            ? duckAddresses.filter((address) => address.account_id === selectedDuckAccount.id)
+            : duckAddresses;
+    }, [duckAddresses, selectedDuckAccount?.id]);
+
+    const lastDuckForwardingMailbox = useMemo(() => {
+        const item = duckAddresses
+            .filter((address) => (
+                address.account_id === selectedDuckAccount?.id &&
+                address.forwarding_mailbox_email &&
+                activeMailboxes.some((mailbox) => mailbox.email === address.forwarding_mailbox_email)
+            ))
+            .sort((a, b) => b.id - a.id)[0];
+        return item?.forwarding_mailbox_email ?? "";
+    }, [activeMailboxes, duckAddresses, selectedDuckAccount?.id]);
+
+    const labeledDuckForwardingMailbox = useMemo(() => {
+        const label = selectedDuckAccount?.label.trim().toLowerCase();
+        if (!label || !label.includes("@")) return "";
+        return activeMailboxes.find((mailbox) => mailbox.email.toLowerCase() === label)?.email ?? "";
+    }, [activeMailboxes, selectedDuckAccount?.label]);
+
+    const defaultDuckForwardingMailbox = useMemo(() => {
+        if (labeledDuckForwardingMailbox) return labeledDuckForwardingMailbox;
+        if (lastDuckForwardingMailbox) return lastDuckForwardingMailbox;
+        if (selectedConnection?.id) {
+            const rootEmail = selectedConnection.rootPrefix && selectedConnection.domain
+                ? `${selectedConnection.rootPrefix}@${selectedConnection.domain}`
+                : null;
+            const rootMailbox = rootEmail
+                ? activeMailboxes.find((mailbox) =>
+                    mailbox.connection_id === selectedConnection.id && mailbox.email === rootEmail
+                )
+                : null;
+            return rootMailbox?.email
+                ?? activeMailboxes.find((mailbox) => mailbox.connection_id === selectedConnection.id)?.email
+                ?? "";
+        }
+        return activeMailboxes[0]?.email ?? "";
+    }, [activeMailboxes, labeledDuckForwardingMailbox, lastDuckForwardingMailbox, selectedConnection]);
 
     const listenerSummary = useMemo(() => {
         let running = 0;
@@ -145,8 +268,27 @@ export function App() {
         return {running, total: visibleListeners.length, errors};
     }, [visibleListeners]);
 
+    function removeToast(id: number) {
+        setToasts((items) => items.filter((item) => item.id !== id));
+    }
+
+    function notify(type: ToastItem["type"], message: string) {
+        if (!message) return;
+        const id = Date.now() + Math.floor(Math.random() * 1000);
+        setToasts((items) => [...items.slice(-3), {id, type, message}]);
+        window.setTimeout(() => removeToast(id), type === "error" ? 6500 : 3800);
+    }
+
+    function showStatus(message: string) {
+        notify("success", message);
+    }
+
+    function showError(message: string) {
+        notify("error", message);
+    }
+
     function reportError(err: unknown) {
-        setError(err instanceof Error ? err.message : String(err));
+        showError(err instanceof Error ? err.message : String(err));
     }
 
     function formatLoginError(err: unknown): string {
@@ -162,7 +304,6 @@ export function App() {
             await verifyAdminPassword(nextPassword);
             setAdminPassword(nextPassword);
             setPassword(nextPassword);
-            setError("");
         } catch (err) {
             const loginMessage = formatLoginError(err);
             setAdminPassword("");
@@ -181,20 +322,23 @@ export function App() {
         setConnections(items);
         setSelectedConnectionId((current) => {
             if (current && items.some((item) => item.id === current && item.status !== "disconnected")) return current;
-            return items.find((item) => item.status !== "disconnected")?.id ?? "";
+            return "";
         });
         return items;
     }
 
     async function loadMailboxes(sync = false, connectionId = selectedConnection?.id): Promise<Mailbox[]> {
-        setError("");
         const items = await fetchMailboxes(sync, sync ? connectionId ?? undefined : undefined);
         setMailboxes(items);
         return items;
     }
 
-    async function loadMails(mailbox = selectedMailbox, sync = false, connectionId = selectedConnection?.id) {
-        setError("");
+    function mailConnectionFilter(mailbox = selectedMailbox): string | undefined {
+        if (!mailbox) return undefined;
+        return activeMailboxes.find((item) => item.email === mailbox)?.connection_id ?? undefined;
+    }
+
+    async function loadMails(mailbox = selectedMailbox, sync = false, connectionId = mailConnectionFilter(mailbox)) {
         const data = await fetchMails(mailbox || undefined, 50, 0, sync, connectionId ?? undefined);
         setMails(data.items);
         if (selectedMail && !data.items.some((mail) => mail.id === selectedMail.id)) {
@@ -203,7 +347,6 @@ export function App() {
     }
 
     async function loadMail(id: number) {
-        setError("");
         const detail = await fetchMail(id);
         setSelectedMail(detail);
     }
@@ -220,6 +363,28 @@ export function App() {
         }
     }
 
+    async function loadDuckAccounts(): Promise<DuckAccount[]> {
+        const items = await fetchDuckAccounts();
+        setDuckAccounts(items);
+        setSelectedDuckAccountId((current) => {
+            if (current && items.some((item) => item.id === current && item.status !== "disabled")) return current;
+            return items.find((item) => item.status !== "disabled")?.id ?? "";
+        });
+        return items;
+    }
+
+    async function loadDuckAddresses(accountId = selectedDuckAccount?.id): Promise<DuckAddress[]> {
+        const items = await fetchDuckAddresses({
+            accountId: accountId || undefined
+        });
+        setDuckAddresses((current) => {
+            if (!accountId) return items;
+            const others = current.filter((item) => item.account_id !== accountId);
+            return [ ...items, ...others ];
+        });
+        return items;
+    }
+
     useEffect(() => {
         const savedPassword = getAdminPassword();
         if (!savedPassword) return;
@@ -231,52 +396,100 @@ export function App() {
     }, [view]);
 
     useEffect(() => {
+        localStorage.setItem(LISTENER_RECONNECT_NOTICE_STORAGE_KEY, String(showListenerReconnectNotice));
+    }, [showListenerReconnectNotice]);
+
+    useEffect(() => {
+        localStorage.setItem(INBOX_AUTO_REFRESH_STORAGE_KEY, String(inboxAutoRefresh));
+    }, [inboxAutoRefresh]);
+
+    useEffect(() => {
+        localStorage.setItem(LISTENER_STATUS_REFRESH_STORAGE_KEY, listenerStatusRefreshInterval);
+    }, [listenerStatusRefreshInterval]);
+
+    useEffect(() => {
         if (!password) return;
         setAdminPassword(password);
         loadConnections().catch(reportError);
         loadMailboxes().catch(reportError);
+        loadServerListenerSettings().catch(reportError);
+        loadDuckAccounts()
+            .then((items) => {
+                const first = items.find((item) => item.status !== "disabled");
+                if (first?.id) {
+                    return fetchDuckAddresses({accountId: first.id});
+                }
+                return [];
+            })
+            .then(setDuckAddresses)
+            .catch(reportError);
     }, [password]);
-
-    useEffect(() => {
-        if (!status) return;
-        const timer = window.setTimeout(() => setStatus(""), 5000);
-        return () => window.clearTimeout(timer);
-    }, [status]);
 
     useEffect(() => {
         if (!password) return;
         if (getRuntimeMode() === "cloudflare") return;
         const events = createEventSource();
         events.addEventListener("mail", () => {
+            if (!inboxAutoRefresh) return;
             loadMails().catch(reportError);
         });
         events.addEventListener("cloudflare-mode", () => {
             setRuntimeMode("cloudflare");
             events.close();
-            setStatus(t("flash.events.manualSync"));
+            showStatus(t("flash.events.manualSync"));
         });
         events.onerror = () => {
             if (getRuntimeMode() === "cloudflare") return;
-            setStatus(t("flash.events.reconnecting"));
+            if (!showListenerReconnectNotice) return;
+            showStatus(t("flash.events.reconnecting"));
         };
         return () => events.close();
-    }, [password, selectedConnection?.id, selectedMailbox]);
+    }, [password, selectedConnection?.id, selectedMailbox, inboxAutoRefresh, showListenerReconnectNotice]);
 
     useEffect(() => {
         if (!password) return;
         setSelectedMail(null);
-        setSelectedMailbox("");
-        loadMails("", false).catch(reportError);
+        loadMails(selectedMailbox, false, mailConnectionFilter(selectedMailbox)).catch(reportError);
         loadListeners();
     }, [password, selectedConnection?.id]);
 
+    useEffect(() => {
+        if (!password) return;
+        const intervalMs = LISTENER_STATUS_REFRESH_MS[listenerStatusRefreshInterval];
+        if (!intervalMs) return;
+        const timer = window.setInterval(() => {
+            loadListeners();
+        }, intervalMs);
+        return () => window.clearInterval(timer);
+    }, [password, listenerStatusRefreshInterval, selectedConnection?.id]);
+
+    useEffect(() => {
+        if (!password) return;
+        loadMails(selectedMailbox, false, mailConnectionFilter(selectedMailbox)).catch(reportError);
+    }, [password, selectedMailbox]);
+
+    useEffect(() => {
+        if (!password || view !== "duck") return;
+        loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
+    }, [password, view, selectedDuckAccount?.id]);
+
+    useEffect(() => {
+        if (!password || view !== "duck") return;
+        if (selectedDuckAccountId && activeDuckAccounts.some((account) => account.id === selectedDuckAccountId)) return;
+        setSelectedDuckAccountId(activeDuckAccounts[0]?.id ?? "");
+    }, [activeDuckAccounts, password, selectedDuckAccountId, view]);
+
+    useEffect(() => {
+        if (!password || view !== "duck") return;
+        if (!defaultDuckForwardingMailbox) return;
+        setDuckForwardingMailbox(defaultDuckForwardingMailbox);
+    }, [password, view, defaultDuckForwardingMailbox]);
+
     async function handleCreateMailbox() {
-        setStatus("");
-        setError("");
         try {
             const created = await createMailbox(suffix, selectedConnection?.id ?? undefined);
             setSuffix("");
-            setStatus(t("flash.mb.created", {email: created.email}));
+            showStatus(t("flash.mb.created", {email: created.email}));
             await loadMailboxes();
         } catch (err) {
             reportError(err);
@@ -285,11 +498,9 @@ export function App() {
 
     async function handleDeleteMailbox(mailbox: Mailbox) {
         if (!confirm(t("mb.confirm.delete", {email: mailbox.email}))) return;
-        setStatus("");
-        setError("");
         try {
             await deleteMailbox(mailbox.id);
-            setStatus(t("flash.mb.deleted", {email: mailbox.email}));
+            showStatus(t("flash.mb.deleted", {email: mailbox.email}));
             await loadMailboxes();
             if (selectedMailbox === mailbox.email) {
                 setSelectedMailbox("");
@@ -300,20 +511,30 @@ export function App() {
         }
     }
 
+    function handleSelectInboxMailbox(value: string) {
+        if (value === ALL_SELECT_VALUE) {
+            setSelectedMailbox("");
+            return;
+        }
+        const mailbox = activeMailboxes.find((item) => item.email === value);
+        if (mailbox?.connection_id) {
+            setSelectedConnectionId(mailbox.connection_id);
+        }
+        setSelectedMailbox(value);
+    }
+
     async function handleSendClawCode() {
-        setStatus("");
-        setError("");
         setClawBusy(true);
         try {
             const loginName = normalizeLoginName(clawLoginName);
             if (!CLAW_LOGIN_NAME_PATTERN.test(loginName)) {
-                setError(t("conn.error.emailFormat"));
+                showError(t("conn.error.emailFormat"));
                 return;
             }
             setClawLoginName(loginName);
             await sendConnectionLoginCode(loginEmailFromName(loginName));
             setClawCodeSent(true);
-            setStatus(t("flash.code.sent"));
+            showStatus(t("flash.code.sent"));
         } catch (err) {
             reportError(err);
         } finally {
@@ -322,18 +543,16 @@ export function App() {
     }
 
     async function handleVerifyClawCode() {
-        setStatus("");
-        setError("");
         setClawBusy(true);
         try {
             const loginName = normalizeLoginName(clawLoginName);
             const code = clawLoginCode.trim();
             if (!CLAW_LOGIN_NAME_PATTERN.test(loginName)) {
-                setError(t("conn.error.emailFormat"));
+                showError(t("conn.error.emailFormat"));
                 return;
             }
             if (!/^\d+$/.test(code)) {
-                setError(t("conn.error.codeFormat"));
+                showError(t("conn.error.codeFormat"));
                 return;
             }
             setClawLoginName(loginName);
@@ -341,7 +560,7 @@ export function App() {
             setClawLoginCode("");
             setClawCodeSent(false);
             setClawLoginName("");
-            setStatus(t("flash.claw.bound", {n: result.syncedMailboxes}));
+            showStatus(t("flash.claw.bound", {n: result.syncedMailboxes}));
             await loadConnections();
             await loadMailboxes();
             loadListeners();
@@ -354,12 +573,10 @@ export function App() {
 
     async function handleRefreshConnection(connectionId = selectedConnection?.id) {
         if (!connectionId) return;
-        setStatus("");
-        setError("");
         setClawBusy(true);
         try {
             const result = await refreshConnection(connectionId);
-            setStatus(t("flash.claw.refreshed", {n: result.syncedMailboxes}));
+            showStatus(t("flash.claw.refreshed", {n: result.syncedMailboxes}));
             await loadConnections();
             await loadMailboxes();
             loadListeners();
@@ -371,12 +588,21 @@ export function App() {
     }
 
     async function handleSyncMailboxes() {
-        setStatus(t("flash.mb.syncing"));
-        setError("");
+        showStatus(t("flash.mb.syncing"));
         setMailboxSyncBusy(true);
         try {
-            const items = await loadMailboxes(true, selectedConnection?.id);
-            setStatus(t("flash.mb.synced", {
+            let items: Mailbox[];
+            if (selectedConnection?.id) {
+                items = await loadMailboxes(true, selectedConnection.id);
+            } else {
+                for (const connection of activeConnections) {
+                    if (connection.id && connection.hasDashboardCookie) {
+                        await fetchMailboxes(true, connection.id);
+                    }
+                }
+                items = await loadMailboxes(false);
+            }
+            showStatus(t("flash.mb.synced", {
                 n: items.filter((mailbox) => mailbox.status !== "deleted").length
             }));
             loadListeners();
@@ -389,12 +615,10 @@ export function App() {
 
     async function handleDisconnectConnection(connectionId: string) {
         if (!confirm(t("confirm.disconnect"))) return;
-        setStatus("");
-        setError("");
         setClawBusy(true);
         try {
             await disconnectConnection(connectionId);
-            setStatus(t("flash.claw.severed"));
+            showStatus(t("flash.claw.severed"));
             await loadConnections();
             loadListeners();
         } catch (err) {
@@ -404,12 +628,135 @@ export function App() {
         }
     }
 
+    async function loadServerListenerSettings() {
+        try {
+            setServerListenerSettings(await fetchListenerSettings());
+        } catch (err) {
+            reportError(err);
+        }
+    }
+
+    async function saveServerListenerSettings(next: ListenerSettings) {
+        setServerListenerSettings(next);
+        setServerListenerSettingsBusy(true);
+        try {
+            const saved = await updateListenerSettings(next);
+            setServerListenerSettings(saved);
+            showStatus("服务端监听设置已保存");
+        } catch (err) {
+            reportError(err);
+            await loadServerListenerSettings();
+        } finally {
+            setServerListenerSettingsBusy(false);
+        }
+    }
+
+    function handleOpenConnectionListeners(connection: ClawAuthStatus) {
+        if (connection.id) {
+            setSelectedConnectionId(connection.id);
+        }
+        setListenersDrawerOpen(true);
+    }
+
+    async function handleCreateDuckAccount() {
+        setDuckBusy(true);
+        try {
+            const account = await createDuckAccount({
+                label: duckLabel.trim(),
+                token: duckToken.trim()
+            });
+            setDuckLabel("");
+            setDuckToken("");
+            setSelectedDuckAccountId(account.id);
+            showStatus(`Duck Token 已保存 · ${account.label}`);
+            await loadDuckAccounts();
+            await loadDuckAddresses(account.id);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setDuckBusy(false);
+        }
+    }
+
+    async function handleGenerateDuckAddress() {
+        if (!selectedDuckAccount?.id) return;
+        setDuckBusy(true);
+        try {
+            const row = await generateDuckAddress(selectedDuckAccount.id, {
+                forwardingMailboxEmail: duckForwardingMailbox || undefined,
+                note: duckNote || undefined
+            });
+            setDuckNote("");
+            showStatus(`已生成 Duck 邮箱 · ${row.address}`);
+            await loadDuckAccounts();
+            await loadDuckAddresses(selectedDuckAccount.id);
+        } catch (err) {
+            reportError(err);
+            await loadDuckAccounts().catch(() => undefined);
+        } finally {
+            setDuckBusy(false);
+        }
+    }
+
+    async function handleDeleteDuckAddress() {
+        if (!duckAddressToDelete) return;
+        const address = duckAddressToDelete;
+        setDuckBusy(true);
+        try {
+            await deleteDuckAddress(address.id);
+            setDuckAddressToDelete(null);
+            setDuckAddresses((items) => items.filter((item) => item.id !== address.id));
+            showStatus(`Duck 邮箱记录已删除 · ${address.address}`);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setDuckBusy(false);
+        }
+    }
+
+    async function handleDisableDuckAccount() {
+        if (!duckAccountToRemove) return;
+        setDuckBusy(true);
+        try {
+            const removedId = duckAccountToRemove.id;
+            await deleteDuckAccount(removedId);
+            showStatus(`Duck Token 已删除 · ${duckAccountToRemove.label}`);
+            setDuckAccountToRemove(null);
+            setDuckAddresses((items) => items.filter((item) => item.account_id !== removedId));
+            await loadDuckAccounts();
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setDuckBusy(false);
+        }
+    }
+
+    async function handleUpdateDuckAccountToken() {
+        if (!duckAccountToUpdate || !duckTokenUpdate.trim()) return;
+        setDuckBusy(true);
+        try {
+            const account = await updateDuckAccountToken(duckAccountToUpdate.id, duckTokenUpdate.trim());
+            setDuckAccountToUpdate(null);
+            setDuckTokenUpdate("");
+            setDuckAccounts((items) => items.map((item) => item.id === account.id ? account : item));
+            showStatus(`Duck Token 已更新 · ${account.label}`);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setDuckBusy(false);
+        }
+    }
+
     function handleLogout() {
         setAdminPassword("");
         setPassword("");
         setLoginInput("");
         setLoginError("");
         setConnections([]);
+        setDuckAccounts([]);
+        setDuckAddresses([]);
+        setSelectedDuckAccountId("");
+        setDuckAccountToUpdate(null);
         setSelectedConnectionId("");
         setListenerItems([]);
         setListenersDrawerOpen(false);
@@ -418,8 +765,6 @@ export function App() {
         setSelectedMailbox("");
         setMails([]);
         setSelectedMail(null);
-        setStatus("");
-        setError("");
     }
 
     if (!password) {
@@ -451,30 +796,29 @@ export function App() {
                 <section className="login-form">
                     <div className="field">
                         <label>{t("login.field.password")}</label>
-                        <input
-                            type="password"
-                            autoFocus
-                            value={loginInput}
-                            placeholder={t("login.placeholder.password")}
-                            disabled={loginBusy}
-                            onChange={(event) => {
-                                setLoginInput(event.target.value);
-                                setLoginError("");
-                            }}
-                            onKeyDown={(event) => {
-                                if (event.key === "Enter") handleLogin();
-                            }}
-                        />
-                    </div>
-                    <div className="actions">
-                        <button
-                            className="primary"
-                            onClick={() => handleLogin()}
-                            disabled={loginBusy || !loginInput}
-                        >
-                            {loginBusy ? t("login.btn.verifying") : t("login.btn.enter")}
-                        </button>
-                        <span className="kbd">⏎</span>
+                        <div className="login-password-row">
+                            <input
+                                type="password"
+                                autoFocus
+                                value={loginInput}
+                                placeholder={t("login.placeholder.password")}
+                                disabled={loginBusy}
+                                onChange={(event) => {
+                                    setLoginInput(event.target.value);
+                                    setLoginError("");
+                                }}
+                                onKeyDown={(event) => {
+                                    if (event.key === "Enter") handleLogin();
+                                }}
+                            />
+                            <button
+                                className="primary"
+                                onClick={() => handleLogin()}
+                                disabled={loginBusy || !loginInput}
+                            >
+                                {loginBusy ? t("login.btn.verifying") : t("login.btn.enter")}
+                            </button>
+                        </div>
                     </div>
                     {loginError && <div className="err" style={{marginTop: 18}}>{loginError}</div>}
                 </section>
@@ -484,6 +828,7 @@ export function App() {
 
     const unreadCount = mails.length;
     const onlineConnections = activeConnections.filter((connection) => connection.connected).length;
+    const activeDuckAddressCount = duckAddresses.filter((address) => address.status === "active").length;
 
     return (
         <main className="app-shell resource-shell">
@@ -498,30 +843,52 @@ export function App() {
                     </div>
                     <PrefsBar variant="rail"/>
                     <button className="top-icon danger" title={t("rail.logout")} aria-label={t("rail.logout")}
-                            onClick={handleLogout}>⏻
+                            onClick={handleLogout}>
+                        <LogOut aria-hidden="true"/>
                     </button>
                 </div>
             </header>
+
+            <div className="toast-stack" aria-live="polite" aria-atomic="false">
+                {toasts.map((toast) => (
+                    <div className={`toast toast-${toast.type}`} key={toast.id}>
+                        <span className="toast-dot" aria-hidden="true"/>
+                        <span>{toast.message}</span>
+                        <button
+                            type="button"
+                            className="toast-close"
+                            onClick={() => removeToast(toast.id)}
+                            aria-label="关闭消息"
+                        >
+                            ×
+                        </button>
+                    </div>
+                ))}
+            </div>
 
             <aside className="rail resource-rail">
                 <nav>
                     <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
                         <span>仪表盘</span>
                     </button>
+                    <button className={view === "inbox" ? "active" : ""} onClick={() => setView("inbox")}>
+                        <span>收件管理</span>
+                        <span className="count">{unreadCount}</span>
+                    </button>
                     <button className={view === "connections" ? "active" : ""} onClick={() => setView("connections")}>
                         <span>连接管理</span>
                         <span className="count">{activeConnections.length}</span>
                     </button>
                     <button className={view === "mailboxes" ? "active" : ""} onClick={() => setView("mailboxes")}>
-                        <span>邮箱管理</span>
+                        <span>Claw 邮箱</span>
                         <span className="count">{activeMailboxes.length}</span>
                     </button>
-                    <button className={view === "inbox" ? "active" : ""} onClick={() => setView("inbox")}>
-                        <span>收件管理</span>
-                        <span className="count">{unreadCount}</span>
+                    <button className={view === "duck" ? "active" : ""} onClick={() => setView("duck")}>
+                        <span>Duck 邮箱</span>
+                        <span className="count">{activeDuckAddressCount}</span>
                     </button>
                     <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
-                        <span>设置</span>
+                        <span>系统设置</span>
                     </button>
                 </nav>
 
@@ -531,6 +898,7 @@ export function App() {
                         <span>连接在线</span><span>{onlineConnections} / {activeConnections.length}</span></div>
                     <div className="health-row">
                         <span>监听通道</span><span>{listenerSummary.running} / {listenerSummary.total}</span></div>
+                    <div className="health-row"><span>Duck 邮箱</span><span>{activeDuckAddressCount}</span></div>
                     <div className="health-row"><span>待处理异常</span><span>{listenerSummary.errors}</span></div>
                 </div>
             </aside>
@@ -541,7 +909,7 @@ export function App() {
                         <h1 className="h-display">{titleForView(view)}</h1>
                     </div>
                     <div className="actions">
-                        {( view === "mailboxes" || view === "inbox" ) && (
+                        {view === "mailboxes" && (
                             <Select
                                 value={selectedConnectionId || ALL_SELECT_VALUE}
                                 onValueChange={(value) => setSelectedConnectionId(value === ALL_SELECT_VALUE ? "" : value)}
@@ -565,14 +933,14 @@ export function App() {
                         {view === "inbox" && (
                             <Select
                                 value={selectedMailbox || ALL_SELECT_VALUE}
-                                onValueChange={(value) => setSelectedMailbox(value === ALL_SELECT_VALUE ? "" : value)}
+                                onValueChange={handleSelectInboxMailbox}
                             >
                                 <SelectTrigger className="toolbar-select mailbox-select">
                                     <SelectValue placeholder="全部邮箱"/>
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value={ALL_SELECT_VALUE}>全部邮箱</SelectItem>
-                                    {visibleMailboxes.map((mailbox) => (
+                                    {activeMailboxes.map((mailbox) => (
                                         <SelectItem key={mailbox.id} value={mailbox.email}>{mailbox.email}</SelectItem>
                                     ))}
                                 </SelectContent>
@@ -591,7 +959,7 @@ export function App() {
                             <button
                                 className={`sync-btn ${mailboxSyncBusy ? "syncing" : ""}`}
                                 onClick={handleSyncMailboxes}
-                                disabled={!selectedConnection?.hasDashboardCookie || mailboxSyncBusy}
+                                disabled={mailboxSyncBusy || (selectedConnectionId ? !selectedConnection?.hasDashboardCookie : activeConnections.length === 0)}
                                 title={t("toolbar.syncHint")}
                                 aria-busy={mailboxSyncBusy}
                             >
@@ -599,15 +967,43 @@ export function App() {
                                 <span>{mailboxSyncBusy ? t("toolbar.syncing") : t("toolbar.sync")}</span>
                             </button>
                         )}
+                        {view === "duck" && activeDuckAccounts.length > 0 && selectedDuckAccount && (
+                            <>
+                                <Select
+                                    value={selectedDuckAccount.id}
+                                    onValueChange={(value) => setSelectedDuckAccountId(value)}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="Duck Token"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {activeDuckAccounts.map((account) => (
+                                            <SelectItem key={account.id} value={account.id}>
+                                                {account.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <button
+                                    onClick={() => {
+                                        setDuckAccountToUpdate(selectedDuckAccount);
+                                        setDuckTokenUpdate("");
+                                    }}
+                                    disabled={duckBusy}
+                                >
+                                    更新当前 Token
+                                </button>
+                                <button
+                                    className="danger"
+                                    onClick={() => setDuckAccountToRemove(selectedDuckAccount)}
+                                    disabled={duckBusy}
+                                >
+                                    删除当前 Token
+                                </button>
+                            </>
+                        )}
                     </div>
                 </header>
-
-                {( status || error ) && (
-                    <div className="flash-line">
-                        {status && <div className="notice">{status}</div>}
-                        {error && <div className="err">{error}</div>}
-                    </div>
-                )}
 
                 {view === "dashboard" && (
                     <section className="dashboard-page">
@@ -629,7 +1025,7 @@ export function App() {
                             </div>
                             <div className="stat-card"><span>子邮箱总数</span><strong>{activeMailboxes.length}</strong>
                             </div>
-                            <div className="stat-card"><span>当前邮件</span><strong>{mails.length}</strong></div>
+                            <div className="stat-card"><span>Duck 邮箱</span><strong>{activeDuckAddressCount}</strong></div>
                         </div>
                     </section>
                 )}
@@ -702,7 +1098,7 @@ export function App() {
                                         <button onClick={() => connection.id && handleRefreshConnection(connection.id)}
                                                 disabled={clawBusy || !connection.id}>刷新
                                         </button>
-                                        <button onClick={() => setListenersDrawerOpen(true)}>监听</button>
+                                        <button onClick={() => handleOpenConnectionListeners(connection)}>监听</button>
                                         <button className="danger"
                                                 onClick={() => connection.id && handleDisconnectConnection(connection.id)}
                                                 disabled={clawBusy || !connection.id || connection.status === "disconnected"}>断开
@@ -731,19 +1127,128 @@ export function App() {
                     />
                 )}
 
+                {view === "duck" && (
+                    <section className="duck-page">
+                        <div className="duck-bind">
+                            <div>
+                                <strong>绑定 Duck Token</strong>
+                                <p>Token 只保存在后端数据库，前端只显示掩码。接口来自 DuckDuckGo Email Protection 的非公开地址生成请求。</p>
+                            </div>
+                            <input
+                                value={duckLabel}
+                                onChange={(event) => setDuckLabel(event.target.value)}
+                                placeholder="标签，例如 DDG 主账号"
+                                disabled={duckBusy}
+                            />
+                            <input
+                                type="password"
+                                value={duckToken}
+                                onChange={(event) => setDuckToken(event.target.value)}
+                                placeholder="Bearer Token"
+                                disabled={duckBusy}
+                            />
+                            <button
+                                className="primary"
+                                onClick={handleCreateDuckAccount}
+                                disabled={duckBusy || !duckLabel.trim() || !duckToken.trim()}
+                            >
+                                保存 Token
+                            </button>
+                        </div>
+
+                        {activeDuckAccounts.length === 0 ? (
+                            <div className="empty-state">
+                                <span className="big">暂无 Duck Token</span>
+                                先从 DuckDuckGo 扩展或页面请求里复制 Authorization Bearer Token，然后保存到这里。
+                            </div>
+                        ) : (
+                            <>
+                                <div className="duck-generate">
+                                    <div>
+                                        <strong>生成 Private Duck Address</strong>
+                                        <p>{selectedDuckAccount ? `${selectedDuckAccount.label} · ${selectedDuckAccount.token_prefix ?? "********"}···${selectedDuckAccount.token_suffix ?? "****"}` : "请选择 Duck Token"}</p>
+                                    </div>
+                                    <Select
+                                        value={duckForwardingMailbox || ALL_SELECT_VALUE}
+                                        onValueChange={(value) => setDuckForwardingMailbox(value === ALL_SELECT_VALUE ? "" : value)}
+                                        disabled={activeMailboxes.length === 0}
+                                    >
+                                        <SelectTrigger className="toolbar-select mailbox-select">
+                                            <SelectValue placeholder="转发目标"/>
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {activeMailboxes.map((mailbox) => (
+                                                <SelectItem key={mailbox.id} value={mailbox.email}>{mailbox.email}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <input
+                                        value={duckNote}
+                                        onChange={(event) => setDuckNote(event.target.value)}
+                                        placeholder="备注，例如注册用途"
+                                        disabled={duckBusy}
+                                    />
+                                    <button
+                                        className="primary"
+                                        onClick={handleGenerateDuckAddress}
+                                        disabled={duckBusy || !selectedDuckAccount}
+                                    >
+                                        {duckBusy ? "生成中" : "生成地址"}
+                                    </button>
+                                </div>
+                                <div className="duck-note-line">
+                                    <span>
+                                        Duck 邮箱记录：{selectedDuckAccount?.label ?? "未选择 Token"} · {visibleDuckAddresses.length} 条
+                                    </span>
+                                </div>
+
+                                <div className="duck-table">
+                                    <div className="duck-row head">
+                                        <span>Duck 邮箱</span>
+                                        <span>目标邮箱</span>
+                                        <span>备注</span>
+                                        <span>创建于</span>
+                                        <span>操作</span>
+                                    </div>
+                                    {visibleDuckAddresses.length === 0 ? (
+                                        <div className="empty-state">
+                                            <span className="big">暂无生成记录</span>
+                                            点击“生成地址”后会保存到这里。
+                                        </div>
+                                    ) : visibleDuckAddresses.map((item) => (
+                                        <div className="duck-row" key={item.id}>
+                                            <div className="email-cell">
+                                                <span className="e">{item.address}</span>
+                                                <span className="pref">本地记录</span>
+                                            </div>
+                                            <span className="time-cell">{item.forwarding_mailbox_email ?? "—"}</span>
+                                            <span className="time-cell">{item.note ?? "—"}</span>
+                                            <span className="time-cell">{item.created_at}</span>
+                                            <div className="ops">
+                                                <button onClick={() => navigator.clipboard.writeText(item.address)}>复制</button>
+                                                <button onClick={() => setDuckAddressToDelete(item)}>删除记录</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </section>
+                )}
+
                 {view === "inbox" && (
                     <InboxView
                         selectedMailbox={selectedMailbox}
                         mails={mails}
                         selectedMail={selectedMail}
                         onSelectMail={(id) => loadMail(id).catch(reportError)}
-                        onRefresh={() => loadMails(selectedMailbox, true).catch(reportError)}
+                        onRefresh={() => loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError)}
                         onDeleted={(id, msg) => {
                             setMails((items) => items.filter((mail) => mail.id !== id));
                             setSelectedMail(null);
-                            setStatus(msg);
+                            showStatus(msg);
                         }}
-                        onReplied={(msg) => setStatus(msg)}
+                        onReplied={(msg) => showStatus(msg)}
                         onError={reportError}
                         adminPassword={password}
                     />
@@ -751,9 +1256,103 @@ export function App() {
 
                 {view === "settings" && (
                     <section className="settings-page">
-                        <div className="empty-state">
-                            <span className="big">系统设置</span>
-                            语言、主题和退出已经放到顶部右侧。后续默认筛选范围、同步策略等偏好放在这里。
+                        <div className="settings-panel">
+                            <div>
+                                <strong>监听与刷新</strong>
+                                <p>这些设置只保存在当前浏览器，用来控制前端提示和刷新频率。</p>
+                            </div>
+                            <label className="setting-row">
+                                <span>
+                                    <strong>监听重连提示</strong>
+                                    <small>实时通道断开时是否弹出右上角消息。</small>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={showListenerReconnectNotice}
+                                    onChange={(event) => setShowListenerReconnectNotice(event.target.checked)}
+                                />
+                            </label>
+                            <label className="setting-row">
+                                <span>
+                                    <strong>收件自动刷新</strong>
+                                    <small>收到实时新邮件事件后自动刷新当前收件列表。</small>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={inboxAutoRefresh}
+                                    onChange={(event) => setInboxAutoRefresh(event.target.checked)}
+                                />
+                            </label>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>监听状态刷新</strong>
+                                    <small>控制连接管理里监听状态的自动刷新频率。</small>
+                                </span>
+                                <Select
+                                    value={listenerStatusRefreshInterval}
+                                    onValueChange={(value) => setListenerStatusRefreshInterval(value as ListenerStatusRefreshInterval)}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="刷新频率"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="manual">仅手动</SelectItem>
+                                        <SelectItem value="30">30 秒</SelectItem>
+                                        <SelectItem value="60">60 秒</SelectItem>
+                                        <SelectItem value="300">5 分钟</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>服务端控制台日志</strong>
+                                    <small>控制后端是否输出监听连接/断开流水。默认静默，只保留真正异常。</small>
+                                </span>
+                                <Select
+                                    value={serverListenerSettings.logMode}
+                                    onValueChange={(value) => saveServerListenerSettings({
+                                        ...serverListenerSettings,
+                                        logMode: value as ListenerSettings["logMode"]
+                                    })}
+                                    disabled={serverListenerSettingsBusy}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="日志模式"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="quiet">静默</SelectItem>
+                                        <SelectItem value="lifecycle">连接/断开</SelectItem>
+                                        <SelectItem value="verbose">详细</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>服务端重连策略</strong>
+                                    <small>控制后端邮箱 WebSocket 断线后的重连间隔。</small>
+                                </span>
+                                <Select
+                                    value={serverListenerSettings.reconnectMode}
+                                    onValueChange={(value) => saveServerListenerSettings({
+                                        ...serverListenerSettings,
+                                        reconnectMode: value as ListenerSettings["reconnectMode"]
+                                    })}
+                                    disabled={serverListenerSettingsBusy}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="重连策略"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="standard">标准</SelectItem>
+                                        <SelectItem value="slow">慢速</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="settings-actions">
+                                <button onClick={() => loadListeners()} disabled={listenerBusy}>
+                                    {listenerBusy ? "刷新中" : "立即刷新监听状态"}
+                                </button>
+                            </div>
                         </div>
                     </section>
                 )}
@@ -763,7 +1362,7 @@ export function App() {
                 open={composeOpen}
                 fromMailbox={selectedMailbox}
                 onClose={() => setComposeOpen(false)}
-                onSent={(msg) => setStatus(msg)}
+                onSent={(msg) => showStatus(msg)}
                 onError={reportError}
             />
 
@@ -774,7 +1373,7 @@ export function App() {
                 onSaved={(updated, msg) => {
                     setMailboxes((items) => items.map((item) => item.id === updated.id ? updated : item));
                     setRulesMailbox(null);
-                    setStatus(msg);
+                    showStatus(msg);
                 }}
                 onError={reportError}
             />
@@ -786,6 +1385,170 @@ export function App() {
                 onClose={() => setListenersDrawerOpen(false)}
                 onRefresh={loadListeners}
             />
+
+            <Dialog
+                open={Boolean(duckAccountToRemove)}
+                onOpenChange={(open) => {
+                    if (!duckBusy && !open) setDuckAccountToRemove(null);
+                }}
+            >
+                {duckAccountToRemove ? (
+                    <DialogContent
+                        className="confirm-dialog"
+                        onEscapeKeyDown={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                        onPointerDownOutside={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                    >
+                        <div className="confirm-copy">
+                            <DialogTitle>移除 Duck Token</DialogTitle>
+                            <DialogDescription>
+                                这会从本地数据库删除该 Token 以及它下面的生成记录。此操作不会调用 DuckDuckGo 远端停用地址。
+                            </DialogDescription>
+                        </div>
+                        <div className="confirm-mail">
+                            <strong>{duckAccountToRemove.label}</strong>
+                            <span className="mono">
+                                {duckAccountToRemove.token_prefix
+                                    ? `${duckAccountToRemove.token_prefix}···${duckAccountToRemove.token_suffix}`
+                                    : "未保存掩码"}
+                            </span>
+                        </div>
+                        <div className="confirm-actions">
+                            <Button
+                                variant="ghost"
+                                onClick={() => setDuckAccountToRemove(null)}
+                                disabled={duckBusy}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                variant="danger"
+                                onClick={handleDisableDuckAccount}
+                                disabled={duckBusy}
+                            >
+                                {duckBusy ? "删除中..." : "确认删除"}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                ) : null}
+            </Dialog>
+
+            <Dialog
+                open={Boolean(duckAddressToDelete)}
+                onOpenChange={(open) => {
+                    if (!duckBusy && !open) setDuckAddressToDelete(null);
+                }}
+            >
+                {duckAddressToDelete ? (
+                    <DialogContent
+                        className="confirm-dialog"
+                        onEscapeKeyDown={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                        onPointerDownOutside={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                    >
+                        <div className="confirm-copy">
+                            <DialogTitle>删除 Duck 邮箱记录</DialogTitle>
+                            <DialogDescription>
+                                这只会删除本项目保存的生成记录，不会停用 DuckDuckGo 远端邮箱，也不会影响已经生成邮箱的转发能力。
+                            </DialogDescription>
+                        </div>
+                        <div className="confirm-mail">
+                            <strong>{duckAddressToDelete.address}</strong>
+                            <span className="mono">
+                                目标邮箱：{duckAddressToDelete.forwarding_mailbox_email ?? "未记录"}
+                            </span>
+                        </div>
+                        <div className="confirm-actions">
+                            <Button
+                                variant="ghost"
+                                onClick={() => setDuckAddressToDelete(null)}
+                                disabled={duckBusy}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                variant="danger"
+                                onClick={handleDeleteDuckAddress}
+                                disabled={duckBusy}
+                            >
+                                {duckBusy ? "删除中..." : "确认删除"}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                ) : null}
+            </Dialog>
+
+            <Dialog
+                open={Boolean(duckAccountToUpdate)}
+                onOpenChange={(open) => {
+                    if (!duckBusy && !open) {
+                        setDuckAccountToUpdate(null);
+                        setDuckTokenUpdate("");
+                    }
+                }}
+            >
+                {duckAccountToUpdate ? (
+                    <DialogContent
+                        className="confirm-dialog"
+                        onEscapeKeyDown={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                        onPointerDownOutside={(event) => {
+                            if (duckBusy) event.preventDefault();
+                        }}
+                    >
+                        <div className="confirm-copy">
+                            <DialogTitle>更新 Duck Token</DialogTitle>
+                            <DialogDescription>
+                                替换当前保存的 Bearer Token。已有 Duck 邮箱记录会保留，后续生成邮箱会使用新 Token。
+                            </DialogDescription>
+                        </div>
+                        <div className="confirm-mail">
+                            <strong>{duckAccountToUpdate.label}</strong>
+                            <span className="mono">
+                                {duckAccountToUpdate.token_prefix
+                                    ? `${duckAccountToUpdate.token_prefix}···${duckAccountToUpdate.token_suffix}`
+                                    : "未保存掩码"}
+                            </span>
+                        </div>
+                        <div className="confirm-input">
+                            <input
+                                type="password"
+                                autoFocus
+                                value={duckTokenUpdate}
+                                onChange={(event) => setDuckTokenUpdate(event.target.value)}
+                                placeholder="新的 Bearer Token"
+                                disabled={duckBusy}
+                            />
+                        </div>
+                        <div className="confirm-actions">
+                            <Button
+                                variant="ghost"
+                                onClick={() => {
+                                    setDuckAccountToUpdate(null);
+                                    setDuckTokenUpdate("");
+                                }}
+                                disabled={duckBusy}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                variant="primary"
+                                onClick={handleUpdateDuckAccountToken}
+                                disabled={duckBusy || !duckTokenUpdate.trim()}
+                            >
+                                {duckBusy ? "更新中..." : "确认更新"}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                ) : null}
+            </Dialog>
         </main>
     );
 }
