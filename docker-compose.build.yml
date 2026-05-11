@@ -1,0 +1,5 @@
+services:
+  claw-email:
+    image: clawemail:local
+    build:
+      context: .

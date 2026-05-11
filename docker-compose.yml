@@ -1,14 +1,21 @@
 services:
   claw-email:
-    image: ghcr.io/wangxingfan/clawemail:latest
-    build: .
+    image: ghcr.io/dear7575/clawemail:latest
     container_name: claw-email
     restart: unless-stopped
-    # Host port can be changed freely; container always listens on 3000.
-    # To run on a different host port, change the left side, e.g. "8080:3000".
     ports:
-      - "3000:3000"
-    env_file:
-      - .env
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      DATABASE_PATH: /app/data/app.db
+      CLAW_DOMAIN: ${CLAW_DOMAIN:-claw.163.com}
     volumes:
-      - ./data:/app/data
+      - ${DATA_DIR:-./data}:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

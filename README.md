@@ -226,29 +226,62 @@ npm run typecheck    # tsc --noEmit
 
 ## 9. Docker 部署
 
-容器内进程恒定监听 `3000`，宿主端口由 `ports` 左侧决定（默认 `3000:3000`）。
+服务器默认不构建源码，只拉取 GitHub Actions 发布到 GHCR 的镜像：
 
-### docker compose
+```text
+ghcr.io/dear7575/clawemail:latest
+```
 
-```powershell
-git clone https://github.com/WangXingFan/ClawEmail.git
+容器内进程固定监听 `3000`，宿主端口由 `HOST_PORT` 控制；SQLite 数据挂载到 `/app/data`。
+
+### 服务器部署
+
+```bash
+git clone https://github.com/dear7575/ClawEmail.git
 cd ClawEmail
 cp .env.example .env
+# 修改 .env 中的 ADMIN_PASSWORD
+docker compose pull
 docker compose up -d
 curl http://localhost:3000/health
 ```
 
-### docker run
+常用配置：
+
+```env
+ADMIN_PASSWORD=change-me
+HOST_PORT=3000
+DATA_DIR=./data
+```
+
+更新版本：
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+### 本地构建镜像
+
+只有需要在当前机器构建镜像时才使用覆盖文件：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+### 手动运行镜像
 
 ```bash
 docker run -d --name clawemail \
   -p 3000:3000 \
   -e ADMIN_PASSWORD=change-me \
+  -e DATABASE_PATH=/app/data/app.db \
   -v $PWD/data:/app/data \
-  ghcr.io/wangxingfan/clawemail:latest
+  ghcr.io/dear7575/clawemail:latest
 ```
 
-`./data` 挂到 `/app/data` 持久化 SQLite。
+`./data` 挂到 `/app/data` 持久化 SQLite。GitHub Actions 会在推送 `main` 后自动构建并推送 `latest` 镜像。
 
 ## 10. Cloudflare 无服务器部署
 
