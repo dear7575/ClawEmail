@@ -14,6 +14,7 @@ import {
   updateDuckAddress
 } from "../db";
 import { generateDuckAddress, normalizeDuckToken } from "../duck-email";
+import { getDuckNetworkSettings, saveDuckNetworkSettings } from "../duck-settings";
 
 const accountSchema = z.object({
   label: z.string().trim().min(1).max(80),
@@ -38,6 +39,11 @@ const updateAddressSchema = z.object({
   note: z.string().trim().max(300).optional().nullable()
 });
 
+const networkSettingsSchema = z.object({
+  proxyUrl: z.string().trim().max(300).optional().or(z.literal("")),
+  timeoutMs: z.coerce.number().int().min(1000).max(120000).optional()
+});
+
 function duckAccountId(): string {
   return `duck:${crypto.randomUUID()}`;
 }
@@ -50,6 +56,18 @@ function normalizeOptionalEmail(value?: string | null): string | null {
 export async function duckRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/duck/accounts", async () => {
     return { items: listDuckAccounts() };
+  });
+
+  app.get("/api/duck/network-settings", async () => {
+    return getDuckNetworkSettings();
+  });
+
+  app.put("/api/duck/network-settings", async (request) => {
+    const body = networkSettingsSchema.parse(request.body);
+    return saveDuckNetworkSettings({
+      proxyUrl: body.proxyUrl ?? "",
+      timeoutMs: body.timeoutMs
+    });
   });
 
   app.post("/api/duck/accounts", async (request, reply) => {
@@ -98,7 +116,7 @@ export async function duckRoutes(app: FastifyInstance): Promise<void> {
 
     const body = createAddressSchema.parse(request.body ?? {});
     try {
-      const generated = await generateDuckAddress(account.token);
+      const generated = await generateDuckAddress(account.token, getDuckNetworkSettings());
       const row = saveDuckAddress({
         accountId: account.id,
         address: generated.address,

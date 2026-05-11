@@ -5,12 +5,16 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: production
       PORT: 3000
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
       DATABASE_PATH: /app/data/app.db
       CLAW_DOMAIN: ${CLAW_DOMAIN:-claw.163.com}
+      DUCK_PROXY_URL: ${DUCK_PROXY_URL:-}
+      DUCK_REQUEST_TIMEOUT_MS: ${DUCK_REQUEST_TIMEOUT_MS:-10000}
     volumes:
       - ${DATA_DIR:-./data}:/app/data
     healthcheck:

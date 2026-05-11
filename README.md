@@ -131,6 +131,8 @@ GET    /api/listener-settings                 # { logMode, reconnectMode }
 PUT    /api/listener-settings                 # { logMode: quiet|lifecycle|verbose, reconnectMode: standard|slow }
 
 GET    /api/duck/accounts
+GET    /api/duck/network-settings       # { proxyUrl, timeoutMs }
+PUT    /api/duck/network-settings       # { proxyUrl?, timeoutMs? }
 POST   /api/duck/accounts              # { label, token }，token 可填 "Bearer xxx" 或 "xxx"
 PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保留地址记录
 DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
@@ -228,6 +230,9 @@ CLAW_PARENT_MAILBOX_ID=
 CLAW_ROOT_PREFIX=
 CLAW_DOMAIN=claw.163.com
 
+DUCK_PROXY_URL=
+DUCK_REQUEST_TIMEOUT_MS=10000
+
 DATABASE_PATH=./data/app.db
 ```
 
@@ -283,7 +288,11 @@ curl http://localhost:3000/health
 ADMIN_PASSWORD=change-me
 HOST_PORT=3000
 DATA_DIR=./data
+DUCK_PROXY_URL=
+DUCK_REQUEST_TIMEOUT_MS=10000
 ```
+
+如果容器无法直连 `quack.duckduckgo.com:443`，可以在 Web 的“系统设置”里填写 Duck 代理地址，或在 `.env` 里设置 `DUCK_PROXY_URL`。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。
 
 更新版本：
 

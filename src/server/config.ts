@@ -11,6 +11,8 @@ const envSchema = z.object({
   CLAW_PARENT_MAILBOX_ID: z.string().optional(),
   CLAW_ROOT_PREFIX: z.string().optional(),
   CLAW_DOMAIN: z.string().default("claw.163.com"),
+  DUCK_PROXY_URL: z.string().optional(),
+  DUCK_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   DATABASE_PATH: z.string().default("./data/app.db")
 });
 

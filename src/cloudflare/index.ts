@@ -123,6 +123,11 @@ const DEFAULT_LISTENER_SETTINGS = {
   reconnectMode: "standard"
 } as const;
 
+const duckNetworkSettingsSchema = z.object({
+  proxyUrl: z.string().trim().max(300).optional().or(z.literal("")),
+  timeoutMs: z.coerce.number().int().min(1000).max(120000).optional()
+});
+
 const sendSchema = z.object({
   from: z.string().email(),
   to: z.array(z.string().email()).min(1),
@@ -191,6 +196,8 @@ const routes: Route[] = [
   route("POST", "/api/connections/:id/refresh", authRefresh),
   route("POST", "/api/connections/:id/logout", authLogout),
   route("GET", "/api/duck/accounts", duckAccountsList),
+  route("GET", "/api/duck/network-settings", duckNetworkSettingsGet),
+  route("PUT", "/api/duck/network-settings", duckNetworkSettingsUpdate),
   route("POST", "/api/duck/accounts", duckAccountsCreate),
   route("PATCH", "/api/duck/accounts/:id", duckAccountsUpdate),
   route("DELETE", "/api/duck/accounts/:id", duckAccountsDelete),
@@ -511,6 +518,18 @@ async function connectionsList({ env }: { env: Env }) {
 
 async function duckAccountsList({ env }: { env: Env }) {
   return json({ items: await listDuckAccounts(env.DB) });
+}
+
+async function duckNetworkSettingsGet({ env }: { env: Env }) {
+  return json({
+    proxyUrl: env.DUCK_PROXY_URL ?? "",
+    timeoutMs: Number(env.DUCK_REQUEST_TIMEOUT_MS ?? 10000)
+  });
+}
+
+async function duckNetworkSettingsUpdate({ request, env }: { request: Request; env: Env }) {
+  duckNetworkSettingsSchema.parse(await readBody(request));
+  return duckNetworkSettingsGet({ env });
 }
 
 async function duckAccountsCreate({ request, env }: { request: Request; env: Env }) {

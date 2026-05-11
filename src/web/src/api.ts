@@ -100,6 +100,11 @@ export type DuckAddress = {
   updated_at: string;
 };
 
+export type DuckNetworkSettings = {
+  proxyUrl: string;
+  timeoutMs: number;
+};
+
 export type RuntimeMode = "node" | "cloudflare" | "unknown";
 
 let runtimeMode: RuntimeMode = "unknown";
@@ -353,6 +358,17 @@ export async function updateListenerSettings(input: ListenerSettings): Promise<L
 export async function fetchDuckAccounts(): Promise<DuckAccount[]> {
   const data = await requestJson<{ items: DuckAccount[] }>("/api/duck/accounts");
   return data.items;
+}
+
+export async function fetchDuckNetworkSettings(): Promise<DuckNetworkSettings> {
+  return requestJson<DuckNetworkSettings>("/api/duck/network-settings");
+}
+
+export async function updateDuckNetworkSettings(input: DuckNetworkSettings): Promise<DuckNetworkSettings> {
+  return requestJson<DuckNetworkSettings>("/api/duck/network-settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
 }
 
 export async function createDuckAccount(input: {

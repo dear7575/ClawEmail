@@ -20,9 +20,11 @@ import {
     deleteDuckAccount,
     type DuckAccount,
     type DuckAddress,
+    type DuckNetworkSettings,
     fetchConnections,
     fetchDuckAccounts,
     fetchDuckAddresses,
+    fetchDuckNetworkSettings,
     fetchListenerSettings,
     fetchListeners,
     fetchMail,
@@ -41,6 +43,7 @@ import {
     setAdminPassword,
     setRuntimeMode,
     updateDuckAccountToken,
+    updateDuckNetworkSettings,
     updateListenerSettings,
     verifyAdminPassword,
     verifyConnectionLoginCode
@@ -178,6 +181,13 @@ export function App() {
         reconnectMode: "standard"
     });
     const [serverListenerSettingsBusy, setServerListenerSettingsBusy] = useState(false);
+    const [duckNetworkSettings, setDuckNetworkSettings] = useState<DuckNetworkSettings>({
+        proxyUrl: "",
+        timeoutMs: 10000
+    });
+    const [duckNetworkProxyInput, setDuckNetworkProxyInput] = useState("");
+    const [duckNetworkTimeoutInput, setDuckNetworkTimeoutInput] = useState("10000");
+    const [duckNetworkSettingsBusy, setDuckNetworkSettingsBusy] = useState(false);
 
     const activeConnections = useMemo(
         () => connections.filter((connection) => connection.status !== "disconnected"),
@@ -413,6 +423,7 @@ export function App() {
         loadConnections().catch(reportError);
         loadMailboxes().catch(reportError);
         loadServerListenerSettings().catch(reportError);
+        loadDuckNetworkSettings().catch(reportError);
         loadDuckAccounts()
             .then((items) => {
                 const first = items.find((item) => item.status !== "disabled");
@@ -636,6 +647,20 @@ export function App() {
         }
     }
 
+    function applyDuckNetworkSettings(settings: DuckNetworkSettings) {
+        setDuckNetworkSettings(settings);
+        setDuckNetworkProxyInput(settings.proxyUrl);
+        setDuckNetworkTimeoutInput(String(settings.timeoutMs));
+    }
+
+    async function loadDuckNetworkSettings() {
+        try {
+            applyDuckNetworkSettings(await fetchDuckNetworkSettings());
+        } catch (err) {
+            reportError(err);
+        }
+    }
+
     async function saveServerListenerSettings(next: ListenerSettings) {
         setServerListenerSettings(next);
         setServerListenerSettingsBusy(true);
@@ -648,6 +673,28 @@ export function App() {
             await loadServerListenerSettings();
         } finally {
             setServerListenerSettingsBusy(false);
+        }
+    }
+
+    async function handleSaveDuckNetworkSettings() {
+        const timeoutMs = Number(duckNetworkTimeoutInput);
+        if (!Number.isFinite(timeoutMs)) {
+            showError("Duck 请求超时时间必须是数字");
+            return;
+        }
+        setDuckNetworkSettingsBusy(true);
+        try {
+            const saved = await updateDuckNetworkSettings({
+                proxyUrl: duckNetworkProxyInput.trim(),
+                timeoutMs
+            });
+            applyDuckNetworkSettings(saved);
+            showStatus("Duck 代理设置已保存");
+        } catch (err) {
+            reportError(err);
+            await loadDuckNetworkSettings();
+        } finally {
+            setDuckNetworkSettingsBusy(false);
         }
     }
 
@@ -1348,7 +1395,44 @@ export function App() {
                                     </SelectContent>
                                 </Select>
                             </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Duck 代理地址</strong>
+                                    <small>容器无法直连 DuckDuckGo 时填写，例如 http://host.docker.internal:7890。留空表示直连。</small>
+                                </span>
+                                <input
+                                    value={duckNetworkProxyInput}
+                                    onChange={(event) => setDuckNetworkProxyInput(event.target.value)}
+                                    placeholder="http://host:port"
+                                    disabled={duckNetworkSettingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Duck 请求超时</strong>
+                                    <small>生成 Duck 邮箱时等待 DuckDuckGo 响应的最长时间，单位毫秒。</small>
+                                </span>
+                                <input
+                                    type="number"
+                                    min={1000}
+                                    max={120000}
+                                    step={1000}
+                                    value={duckNetworkTimeoutInput}
+                                    onChange={(event) => setDuckNetworkTimeoutInput(event.target.value)}
+                                    disabled={duckNetworkSettingsBusy}
+                                />
+                            </div>
                             <div className="settings-actions">
+                                <button
+                                    className="primary"
+                                    onClick={handleSaveDuckNetworkSettings}
+                                    disabled={duckNetworkSettingsBusy || (
+                                        duckNetworkProxyInput.trim() === duckNetworkSettings.proxyUrl &&
+                                        String(Number(duckNetworkTimeoutInput)) === String(duckNetworkSettings.timeoutMs)
+                                    )}
+                                >
+                                    {duckNetworkSettingsBusy ? "保存中" : "保存 Duck 代理"}
+                                </button>
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>
                                     {listenerBusy ? "刷新中" : "立即刷新监听状态"}
                                 </button>

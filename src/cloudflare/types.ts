@@ -39,6 +39,8 @@ export type Env = {
   CLAW_PARENT_MAILBOX_ID?: string;
   CLAW_ROOT_PREFIX?: string;
   CLAW_DOMAIN?: string;
+  DUCK_PROXY_URL?: string;
+  DUCK_REQUEST_TIMEOUT_MS?: string;
 };
 
 export type MailboxRow = {
