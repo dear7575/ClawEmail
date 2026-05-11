@@ -2163,34 +2163,161 @@ a:hover {
         padding: 22px;
     }
 
+    .stats-grid,
+    .connection-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .connection-bind {
+        grid-template-columns: minmax(220px, 1fr) minmax(220px, 320px);
+    }
+
+    .connection-bind .actions {
+        justify-content: flex-start;
+    }
+
     .mb-row {
         grid-template-columns: minmax(180px, 1fr) 90px 120px 110px 160px;
     }
 }
 
+/* 移动端适配：把桌面后台的固定侧栏和三栏内容改成可触控、可滚动的单列结构。 */
 @media (max-width: 880px) {
+    html,
+    body,
+    #root {
+        height: auto;
+        min-height: 100%;
+    }
+
     .login-shell {
         grid-template-columns: 1fr;
+        min-height: 100dvh;
+        overflow: auto;
     }
 
     .login-shell .stage {
-        padding: 32px;
-        min-height: 44vh;
+        min-height: auto;
+        padding: 28px 22px 0;
+        gap: 28px;
+    }
+
+    .login-shell .pitch {
+        transform: none;
+        padding-top: 30px;
+    }
+
+    .login-shell .pitch h1 {
+        max-width: 520px;
+        font-size: clamp(36px, 11vw, 58px);
+    }
+
+    .login-shell .pitch p {
+        max-width: 58ch;
     }
 
     .login-form {
-        margin: 0 20px 24px;
+        width: calc(100% - 40px);
+        max-width: 440px;
+        transform: none;
+        justify-self: center;
+        margin: 20px auto 26px;
+        padding: 24px;
     }
 
     .app-shell {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
         grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        overflow-x: hidden;
+        background-size: auto, 44px 44px, 44px 44px;
+    }
+
+    .app-topbar {
+        position: sticky;
+        top: 0;
+        grid-template-columns: minmax(0, 1fr) auto;
+        height: auto;
+        min-height: 58px;
+    }
+
+    .topbar-brand {
+        min-width: 0;
+        border-right: 0;
+        padding: 10px 14px;
+    }
+
+    .brand-mark {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+    }
+
+    .topbar-actions {
+        min-width: 0;
+        gap: 6px;
+        padding: 10px 12px 10px 0;
+    }
+
+    .account-pill {
+        padding: 6px 8px;
+    }
+
+    .top-icon,
+    .pref-btn {
+        width: 32px;
+        min-width: 32px;
+        height: 32px;
+        padding: 0;
     }
 
     .rail {
-        position: static;
+        position: sticky;
+        top: 58px;
+        z-index: 19;
+        width: 100%;
+        height: auto;
         max-height: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex: 0 0 auto;
         border-right: 0;
         border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+        scrollbar-width: none;
+    }
+
+    .rail::-webkit-scrollbar {
+        display: none;
+    }
+
+    .rail nav {
+        width: max-content;
+        min-width: 100%;
+        display: flex;
+        gap: 8px;
+    }
+
+    .rail nav button {
+        width: auto;
+        min-width: max-content;
+        height: 36px;
+        display: inline-flex;
+        grid-template-columns: none;
+        justify-content: center;
+        padding: 0 12px;
+        white-space: nowrap;
+    }
+
+    .rail nav button .count {
+        min-width: 20px;
+        padding: 1px 6px;
+    }
+
+    .resource-rail .sidebar-status {
+        display: none;
     }
 
     .rail-resizer,
@@ -2198,17 +2325,196 @@ a:hover {
         display: none;
     }
 
+    .work,
+    .inbox-work {
+        grid-column: auto;
+        grid-row: auto;
+        width: 100%;
+        min-height: 0;
+        height: auto;
+        overflow: visible;
+        flex: 1 1 auto;
+        gap: 14px;
+        padding: 16px;
+    }
+
     .work-head {
         grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .h-display {
+        font-size: 20px;
     }
 
     .work-head .actions {
         justify-content: flex-start;
+        width: 100%;
+    }
+
+    .work-head .actions .toolbar-select,
+    .work-head .actions .mailbox-select,
+    .work-head .actions button {
+        width: 100%;
+        max-width: none;
+    }
+
+    .ui-select-trigger {
+        width: 100%;
+        min-width: 0;
+        height: 38px;
+    }
+
+    .ui-select-content {
+        max-width: calc(100vw - 28px);
+    }
+
+    .hero-board {
+        border-radius: 18px;
+        padding: 16px;
+    }
+
+    .hero-board h2 {
+        font-size: 20px;
+    }
+
+    .hero-actions,
+    .connection-bind .actions,
+    .card-actions {
+        align-items: stretch;
+    }
+
+    .hero-actions button,
+    .connection-bind .actions button,
+    .card-actions button {
+        flex: 1 1 128px;
+    }
+
+    .stats-grid,
+    .connection-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .connection-bind {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+        border-radius: 18px;
+    }
+
+    .login-name-field {
+        min-height: 38px;
+    }
+
+    .connection-card .card-head {
+        align-items: flex-start;
+    }
+
+    .connection-meta {
+        grid-template-columns: 58px minmax(0, 1fr);
+    }
+
+    .create-bar {
+        grid-template-columns: 1fr;
+        border-radius: 18px;
+        padding: 13px;
+    }
+
+    .create-bar .composer {
+        width: 100%;
+    }
+
+    .create-bar .composer input {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .create-bar button {
+        width: 100%;
     }
 
     .inbox {
         grid-template-columns: 1fr;
+        min-height: auto;
         gap: 14px;
+        flex: 0 0 auto;
+    }
+
+    .list-pane,
+    .detail-pane {
+        border-radius: 18px;
+        overflow: hidden;
+    }
+
+    .list-pane .scroll {
+        max-height: 42dvh;
+    }
+
+    .pane-head {
+        min-height: auto;
+        align-items: flex-start;
+        padding: 12px;
+    }
+
+    .pane-head > span:last-child {
+        flex: 0 0 auto;
+    }
+
+    .mail-row {
+        padding: 12px;
+    }
+
+    .detail-empty {
+        min-height: 220px;
+        padding: 32px 18px;
+    }
+
+    .detail-head {
+        padding: 15px;
+    }
+
+    .detail-head .crumbs {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .detail-delete {
+        width: auto;
+        margin-left: 0;
+    }
+
+    .detail-head h2 {
+        font-size: 18px;
+    }
+
+    .detail-body {
+        overflow: visible;
+        padding: 14px 15px;
+    }
+
+    .detail-body iframe {
+        min-height: 360px;
+    }
+
+    .detail-body pre {
+        padding: 14px;
+    }
+
+    .attachments {
+        padding: 0 15px 12px;
+    }
+
+    .reply-box {
+        padding: 13px 15px 15px;
+    }
+
+    .reply-box .head,
+    .reply-box .row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .reply-box .row button {
+        width: 100%;
     }
 
     .mb-row,
@@ -2220,7 +2526,250 @@ a:hover {
         display: none;
     }
 
+    .mb-table {
+        display: grid;
+        gap: 10px;
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    .mb-row {
+        gap: 10px;
+        align-items: stretch;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--card);
+        box-shadow: var(--shadow-sm);
+        padding: 13px;
+    }
+
+    .mb-row:last-child {
+        border-bottom: 1px solid var(--border);
+    }
+
+    .ops {
+        justify-content: flex-start;
+    }
+
+    .ops button {
+        flex: 1 1 92px;
+        min-height: 34px;
+    }
+
     .range-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .listeners-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .drawer {
+        width: 100vw;
+        border-left: 0;
+    }
+
+    .drawer .head {
+        align-items: flex-start;
+        padding: 18px 18px 14px;
+    }
+
+    .drawer .head h2 {
+        font-size: 20px;
+    }
+
+    .drawer .body {
+        padding: 16px 18px;
+    }
+
+    .drawer .body .field {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+
+    .drawer .body .field label,
+    .drawer .body .field .from-val {
+        padding-top: 0;
+    }
+
+    .drawer .actions {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 14px 18px 18px;
+    }
+
+    .drawer .actions .right {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .confirm-dialog {
+        width: 100%;
+    }
+}
+
+@media (max-width: 560px) {
+    button,
+    input,
+    select,
+    textarea {
+        font-size: 13px;
+    }
+
+    .login-shell .stage {
+        padding: 22px 18px 0;
+    }
+
+    .login-shell .pitch {
+        padding-top: 22px;
+    }
+
+    .login-shell .pitch h1 {
+        font-size: clamp(34px, 13vw, 48px);
+    }
+
+    .login-form {
+        width: calc(100% - 28px);
+        margin-bottom: 20px;
+        border-radius: 22px;
+        padding: 22px;
+    }
+
+    .login-form .actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .topbar-brand {
+        gap: 8px;
+        padding-left: 12px;
+        font-size: 15px;
+    }
+
+    .brand-mark {
+        width: 28px;
+        height: 28px;
+        font-size: 12px;
+    }
+
+    .topbar-actions {
+        gap: 5px;
+        padding-right: 10px;
+    }
+
+    .account-pill {
+        display: none;
+    }
+
+    .rail {
+        top: 58px;
+        padding: 9px 10px;
+    }
+
+    .rail nav button {
+        height: 34px;
+        padding: 0 11px;
+        font-size: 12px;
+    }
+
+    .work,
+    .inbox-work {
+        padding: 13px 12px 16px;
+    }
+
+    .hero-board h2 {
+        font-size: 18px;
+    }
+
+    .hero-actions,
+    .card-actions,
+    .connection-bind .actions {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .stat-card strong {
+        font-size: 22px;
+    }
+
+    .connection-card .card-head,
+    .listener-card .top {
+        flex-direction: column;
+    }
+
+    .connection-meta,
+    .detail-head dl,
+    .listener-card dl {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+
+    .login-name-field span {
+        padding: 0 8px;
+    }
+
+    .pane-head {
+        flex-direction: column;
+    }
+
+    .pane-head > span:last-child {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .list-pane .scroll {
+        max-height: 46dvh;
+    }
+
+    .mail-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mail-row .time {
+        grid-row: 2;
+    }
+
+    .mail-row .meta {
+        grid-row: 3;
+    }
+
+    .detail-body iframe {
+        min-height: 320px;
+    }
+
+    .attachments a {
+        width: 100%;
+        overflow-wrap: anywhere;
+    }
+
+    .reply-box .opts {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .confirm-copy {
+        padding: 18px 18px 0;
+    }
+
+    .confirm-mail {
+        margin: 13px 18px 0;
+    }
+
+    .confirm-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        padding: 16px 18px 18px;
+    }
+
+    .confirm-actions button {
+        width: 100%;
+        min-height: 38px;
+    }
+
+    .drawer .actions .right {
         grid-template-columns: 1fr;
     }
 }
