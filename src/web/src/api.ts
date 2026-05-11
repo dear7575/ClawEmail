@@ -28,6 +28,7 @@ export type MailSummary = {
   text: string | null;
   html: string | null;
   has_attachments: number;
+  read_at: string | null;
   received_at: string | null;
   created_at: string;
 };
@@ -100,9 +101,33 @@ export type DuckAddress = {
   updated_at: string;
 };
 
-export type DuckNetworkSettings = {
+export type SystemNetworkSettings = {
   proxyUrl: string;
   timeoutMs: number;
+};
+
+export type TelegramSettings = {
+  enabled: boolean;
+  chatId: string;
+  hasBotToken: boolean;
+  botTokenPreview: string | null;
+};
+
+export type Sub2Settings = {
+  apiUrl: string;
+  hasApiKey: boolean;
+  apiKeyPreview: string | null;
+};
+
+export type Sub2Group = {
+  id: number;
+  name?: string;
+};
+
+export type Sub2PushResult = {
+  success?: boolean;
+  data: unknown;
+  response?: unknown;
 };
 
 export type RuntimeMode = "node" | "cloudflare" | "unknown";
@@ -360,14 +385,70 @@ export async function fetchDuckAccounts(): Promise<DuckAccount[]> {
   return data.items;
 }
 
-export async function fetchDuckNetworkSettings(): Promise<DuckNetworkSettings> {
-  return requestJson<DuckNetworkSettings>("/api/duck/network-settings");
+export async function fetchSystemNetworkSettings(): Promise<SystemNetworkSettings> {
+  return requestJson<SystemNetworkSettings>("/api/system/network-settings");
 }
 
-export async function updateDuckNetworkSettings(input: DuckNetworkSettings): Promise<DuckNetworkSettings> {
-  return requestJson<DuckNetworkSettings>("/api/duck/network-settings", {
+export async function updateSystemNetworkSettings(input: SystemNetworkSettings): Promise<SystemNetworkSettings> {
+  return requestJson<SystemNetworkSettings>("/api/system/network-settings", {
     method: "PUT",
     body: JSON.stringify(input)
+  });
+}
+
+export async function fetchTelegramSettings(): Promise<TelegramSettings> {
+  return requestJson<TelegramSettings>("/api/telegram/settings");
+}
+
+export async function updateTelegramSettings(input: {
+  enabled?: boolean;
+  botToken?: string;
+  chatId?: string;
+}): Promise<TelegramSettings> {
+  return requestJson<TelegramSettings>("/api/telegram/settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function sendTelegramNotification(text: string): Promise<void> {
+  await requestJson<{ success: boolean }>("/api/telegram/send", {
+    method: "POST",
+    body: JSON.stringify({ text })
+  });
+}
+
+export async function fetchSub2Settings(): Promise<Sub2Settings> {
+  return requestJson<Sub2Settings>("/api/sub2/settings");
+}
+
+export async function updateSub2Settings(input: {
+  apiUrl?: string;
+  apiKey?: string;
+}): Promise<Sub2Settings> {
+  return requestJson<Sub2Settings>("/api/sub2/settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchSub2Groups(): Promise<Sub2Group[]> {
+  const result = await requestJson<{ items: Sub2Group[] }>("/api/sub2/groups");
+  return result.items;
+}
+
+export async function convertSub2Account(input: unknown): Promise<unknown> {
+  const result = await requestJson<{ data: unknown }>("/api/sub2/convert", {
+    method: "POST",
+    body: JSON.stringify({ input })
+  });
+  return result.data;
+}
+
+export async function pushSub2Account(input: unknown, groupId: number): Promise<Sub2PushResult> {
+  return requestJson<Sub2PushResult>("/api/sub2/push", {
+    method: "POST",
+    body: JSON.stringify({ input, groupId })
   });
 }
 

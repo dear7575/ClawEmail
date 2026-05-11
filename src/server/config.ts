@@ -11,8 +11,15 @@ const envSchema = z.object({
   CLAW_PARENT_MAILBOX_ID: z.string().optional(),
   CLAW_ROOT_PREFIX: z.string().optional(),
   CLAW_DOMAIN: z.string().default("claw.163.com"),
+  SYSTEM_PROXY_URL: z.string().optional(),
+  SYSTEM_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   DUCK_PROXY_URL: z.string().optional(),
   DUCK_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
+  SUB2_API_URL: z.string().optional(),
+  SUB2_API_KEY: z.string().optional(),
+  SUB2_PROXY_TEMPLATE_JSON: z.string().optional(),
   DATABASE_PATH: z.string().default("./data/app.db")
 });
 

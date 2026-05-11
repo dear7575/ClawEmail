@@ -11,6 +11,7 @@ import {
   listAttachments,
   listMailProviderIds,
   listMails,
+  markMailRead,
   saveMail
 } from "../db";
 
@@ -84,7 +85,7 @@ export async function mailRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/mails/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const mail = getMailById(Number(id));
+    const mail = markMailRead(Number(id));
     if (!mail) {
       return reply.code(404).send({ error: "mail not found" });
     }

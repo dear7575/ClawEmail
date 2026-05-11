@@ -41,6 +41,8 @@ src/
 | 附件下载 | 不缓存原始字节，按需经 SDK 流式拉取 | `routes/mails.ts` |
 | 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `routes/events.ts`、`ListenersDrawer.tsx` |
 | Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `routes/duck.ts`、`duck-email.ts`、`App.tsx` |
+| 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `routes/telegram.ts`、`telegram.ts`、`App.tsx` |
+| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；获取 OpenAI 分组并按所选分组推送 | `routes/sub2.ts`、`sub2.ts`、`App.tsx` |
 | 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `i18n.tsx`、`hooks.ts` |
 
 ## 2. Claw 验证码登录链
@@ -118,7 +120,7 @@ DELETE /api/mailboxes/:id
 
 GET    /api/mails?mailbox=&limit=50&offset=0
 GET    /api/mails?sync=true&mailbox=...      # 远端 INBOX 全量比对
-GET    /api/mails/:id                        # 详情 + 解析后 JSON + 附件元数据
+GET    /api/mails/:id                        # 标记已读，返回详情 + 解析后 JSON + 附件元数据
 DELETE /api/mails/:id                        # 远端移到 Trash + 本地删除
 GET    /api/mails/:id/attachments/:partId    # 流式下载附件
 
@@ -130,9 +132,10 @@ GET    /api/listeners
 GET    /api/listener-settings                 # { logMode, reconnectMode }
 PUT    /api/listener-settings                 # { logMode: quiet|lifecycle|verbose, reconnectMode: standard|slow }
 
+GET    /api/system/network-settings           # { proxyUrl, timeoutMs }
+PUT    /api/system/network-settings           # { proxyUrl?, timeoutMs? }
+
 GET    /api/duck/accounts
-GET    /api/duck/network-settings       # { proxyUrl, timeoutMs }
-PUT    /api/duck/network-settings       # { proxyUrl?, timeoutMs? }
 POST   /api/duck/accounts              # { label, token }，token 可填 "Bearer xxx" 或 "xxx"
 PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保留地址记录
 DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
@@ -140,6 +143,16 @@ GET    /api/duck/addresses?accountId=
 POST   /api/duck/accounts/:id/addresses # { forwardingMailboxEmail?, note? }
 PATCH  /api/duck/addresses/:id          # { forwardingMailboxEmail?, note? }
 DELETE /api/duck/addresses/:id          # 删除本地生成记录，不调用 DuckDuckGo 远端
+
+GET    /api/telegram/settings            # { enabled, chatId, hasBotToken, botTokenPreview }
+PUT    /api/telegram/settings            # { enabled?, botToken?, chatId? }
+POST   /api/telegram/send                # { text }，手动发送文本到 Telegram
+
+GET    /api/sub2/settings                 # { apiUrl, hasApiKey, apiKeyPreview }
+PUT    /api/sub2/settings                 # { apiUrl?, apiKey? }
+GET    /api/sub2/groups                   # 拉取 OpenAI active 分组供页面选择
+POST   /api/sub2/convert                  # { input }，仅转换预览，不访问 Sub2API
+POST   /api/sub2/push                     # { input, groupId }，转换后按所选分组推送
 ```
 
 请求样例：
@@ -177,9 +190,9 @@ SQLite 文件由 `DATABASE_PATH` 指定（默认 `./data/app.db`），开启 `jo
 
 ```text
 mailboxes      子邮箱：id / email(unique) / prefix / status / install_command / auth_url / comm_level ...
-mails          邮件：mailbox_email + provider_mail_id 联合唯一，含 raw_json 全文
+mails          邮件：mailbox_email + provider_mail_id 联合唯一，含 raw_json 全文和 read_at 已读时间
 attachments    附件元数据：mail_id 外键 → mails.id（ON DELETE CASCADE）
-app_settings   key/value，存 Claw 凭据
+app_settings   key/value，存 Claw 凭据、监听设置、系统代理、Telegram 与 Sub2API 配置
 duck_accounts  DuckDuckGo Email Protection Token（仅后端使用，API 返回时脱敏）
 duck_addresses 已生成的 Private Duck Address、备注、预期转发目标和原始响应
 ```
@@ -202,6 +215,19 @@ Authorization: Bearer <DDG_TOKEN>
 ```
 
 本项目会规范化保存为 `example-private-address@duck.com`。Duck Token 属于敏感凭据，只保存在后端数据库中，前端只显示前后缀掩码。当前版本只支持**生成与本地记录**，不承诺远端停用、变更转发目标或读取 Duck 收件箱；Duck 邮箱没有独立收件箱，邮件会转发到你在 DuckDuckGo 里配置的真实邮箱。
+
+## 5.2 Sub2API 账号推送
+
+“账号推送”页面接收 `temp/test.json` 结构的 ChatGPT 账号 JSON，转换为 Sub2API 的账号导入数据。转换时保持 `temp/toSub2.json` 或 `SUB2_PROXY_TEMPLATE_JSON` 中的 `proxies` 原样不变，并使用其中第一个 `proxy_key` 绑定账号。
+
+推送流程：
+
+1. 从“系统设置”读取 Sub2API 地址和 APIKey。
+2. 调用 `GET /api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active` 获取 OpenAI 可用分组。
+3. 页面选择目标分组。
+4. 调用 `POST /api/v1/admin/accounts/data`，账号写入 `group_ids: [所选分组ID]`。
+
+Sub2API 地址可以填写根地址，例如 `https://sub2.example.com`，也可以填写完整 `/api/v1/admin/accounts/data` 导入地址。Admin API Key 会按 Sub2API 约定放到 `x-api-key` 请求头；如果配置值以 `Bearer ` 开头，则按 JWT 令牌放到 `Authorization` 请求头。
 
 ## 6. 监听器与重连
 
@@ -230,8 +256,13 @@ CLAW_PARENT_MAILBOX_ID=
 CLAW_ROOT_PREFIX=
 CLAW_DOMAIN=claw.163.com
 
-DUCK_PROXY_URL=
-DUCK_REQUEST_TIMEOUT_MS=10000
+SYSTEM_PROXY_URL=
+SYSTEM_REQUEST_TIMEOUT_MS=10000
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+SUB2_API_URL=
+SUB2_API_KEY=
+SUB2_PROXY_TEMPLATE_JSON=
 
 DATABASE_PATH=./data/app.db
 ```
@@ -288,11 +319,16 @@ curl http://localhost:3000/health
 ADMIN_PASSWORD=change-me
 HOST_PORT=3000
 DATA_DIR=./data
-DUCK_PROXY_URL=
-DUCK_REQUEST_TIMEOUT_MS=10000
+SYSTEM_PROXY_URL=
+SYSTEM_REQUEST_TIMEOUT_MS=10000
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+SUB2_API_URL=
+SUB2_API_KEY=
+SUB2_PROXY_TEMPLATE_JSON=
 ```
 
-如果容器无法直连 `quack.duckduckgo.com:443`，可以在 Web 的“系统设置”里填写 Duck 代理地址，或在 `.env` 里设置 `DUCK_PROXY_URL`。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。
+如果容器无法直连 DuckDuckGo、Telegram 或 Sub2API，可以在 Web 的“系统设置”里填写系统代理地址，或在 `.env` 里设置 `SYSTEM_PROXY_URL`。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。旧的 `DUCK_PROXY_URL` / `DUCK_REQUEST_TIMEOUT_MS` 仍作为兼容兜底值读取。
 
 更新版本：
 

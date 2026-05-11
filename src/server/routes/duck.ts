@@ -14,7 +14,7 @@ import {
   updateDuckAddress
 } from "../db";
 import { generateDuckAddress, normalizeDuckToken } from "../duck-email";
-import { getDuckNetworkSettings, saveDuckNetworkSettings } from "../duck-settings";
+import { getSystemNetworkSettings, saveSystemNetworkSettings } from "../network-settings";
 
 const accountSchema = z.object({
   label: z.string().trim().min(1).max(80),
@@ -58,13 +58,25 @@ export async function duckRoutes(app: FastifyInstance): Promise<void> {
     return { items: listDuckAccounts() };
   });
 
+  app.get("/api/system/network-settings", async () => {
+    return getSystemNetworkSettings();
+  });
+
+  app.put("/api/system/network-settings", async (request) => {
+    const body = networkSettingsSchema.parse(request.body);
+    return saveSystemNetworkSettings({
+      proxyUrl: body.proxyUrl ?? "",
+      timeoutMs: body.timeoutMs
+    });
+  });
+
   app.get("/api/duck/network-settings", async () => {
-    return getDuckNetworkSettings();
+    return getSystemNetworkSettings();
   });
 
   app.put("/api/duck/network-settings", async (request) => {
     const body = networkSettingsSchema.parse(request.body);
-    return saveDuckNetworkSettings({
+    return saveSystemNetworkSettings({
       proxyUrl: body.proxyUrl ?? "",
       timeoutMs: body.timeoutMs
     });
@@ -116,7 +128,7 @@ export async function duckRoutes(app: FastifyInstance): Promise<void> {
 
     const body = createAddressSchema.parse(request.body ?? {});
     try {
-      const generated = await generateDuckAddress(account.token, getDuckNetworkSettings());
+      const generated = await generateDuckAddress(account.token, getSystemNetworkSettings());
       const row = saveDuckAddress({
         accountId: account.id,
         address: generated.address,

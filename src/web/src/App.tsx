@@ -11,45 +11,56 @@ import {PrefsBar, usePrefs} from "./i18n";
 import {LogOut} from "lucide-react";
 import {
     type ClawAuthStatus,
-    createEventSource,
+    convertSub2Account,
     createDuckAccount,
+    createEventSource,
     createMailbox,
+    deleteDuckAccount,
     deleteDuckAddress,
     deleteMailbox,
     disconnectConnection,
-    deleteDuckAccount,
     type DuckAccount,
     type DuckAddress,
-    type DuckNetworkSettings,
     fetchConnections,
     fetchDuckAccounts,
     fetchDuckAddresses,
-    fetchDuckNetworkSettings,
-    fetchListenerSettings,
     fetchListeners,
+    fetchListenerSettings,
     fetchMail,
     fetchMailboxes,
     fetchMails,
+    fetchSub2Groups,
+    fetchSub2Settings,
+    fetchSystemNetworkSettings,
+    fetchTelegramSettings,
     generateDuckAddress,
     getAdminPassword,
     getRuntimeMode,
-    type ListenerSnapshot,
     type ListenerSettings,
+    type ListenerSnapshot,
     type Mailbox,
     type MailDetail,
     type MailSummary,
+    pushSub2Account,
     refreshConnection,
     sendConnectionLoginCode,
+    sendTelegramNotification,
     setAdminPassword,
     setRuntimeMode,
+    type Sub2Group,
+    type Sub2Settings,
+    type SystemNetworkSettings,
+    type TelegramSettings,
     updateDuckAccountToken,
-    updateDuckNetworkSettings,
     updateListenerSettings,
+    updateSub2Settings,
+    updateSystemNetworkSettings,
+    updateTelegramSettings,
     verifyAdminPassword,
     verifyConnectionLoginCode
 } from "./api";
 
-type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "settings";
+type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "accountPush" | "notifications" | "settings";
 type ToastItem = {
     id: number;
     type: "success" | "error";
@@ -76,7 +87,9 @@ function readInitialView(): View {
     if (typeof localStorage === "undefined") return "dashboard";
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
     return saved === "connections" || saved === "mailboxes" || saved === "inbox" || saved === "settings"
-        || saved === "duck"
+    || saved === "notifications"
+    || saved === "accountPush"
+    || saved === "duck"
         ? saved
         : "dashboard";
 }
@@ -88,6 +101,8 @@ function titleForView(view: View): string {
         mailboxes: "Claw 邮箱",
         duck: "Duck 邮箱",
         inbox: "收件管理",
+        accountPush: "账号推送",
+        notifications: "消息通知",
         settings: "系统设置"
     };
     return map[ view ];
@@ -180,14 +195,33 @@ export function App() {
         logMode: "quiet",
         reconnectMode: "standard"
     });
-    const [serverListenerSettingsBusy, setServerListenerSettingsBusy] = useState(false);
-    const [duckNetworkSettings, setDuckNetworkSettings] = useState<DuckNetworkSettings>({
-        proxyUrl: "",
-        timeoutMs: 10000
+    const [systemProxyInput, setSystemProxyInput] = useState("");
+    const [systemTimeoutInput, setSystemTimeoutInput] = useState("10000");
+    const [telegramSettings, setTelegramSettings] = useState<TelegramSettings>({
+        enabled: false,
+        chatId: "",
+        hasBotToken: false,
+        botTokenPreview: null
     });
-    const [duckNetworkProxyInput, setDuckNetworkProxyInput] = useState("");
-    const [duckNetworkTimeoutInput, setDuckNetworkTimeoutInput] = useState("10000");
-    const [duckNetworkSettingsBusy, setDuckNetworkSettingsBusy] = useState(false);
+    const [sub2Settings, setSub2Settings] = useState<Sub2Settings>({
+        apiUrl: "",
+        hasApiKey: false,
+        apiKeyPreview: null
+    });
+    const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
+    const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
+    const [telegramChatIdInput, setTelegramChatIdInput] = useState("");
+    const [sub2ApiUrlInput, setSub2ApiUrlInput] = useState("");
+    const [sub2ApiKeyInput, setSub2ApiKeyInput] = useState("");
+    const [settingsBusy, setSettingsBusy] = useState(false);
+    const [telegramMessage, setTelegramMessage] = useState("");
+    const [telegramSendBusy, setTelegramSendBusy] = useState(false);
+    const [sub2SourceJson, setSub2SourceJson] = useState("");
+    const [sub2PreviewJson, setSub2PreviewJson] = useState("");
+    const [sub2Groups, setSub2Groups] = useState<Sub2Group[]>([]);
+    const [selectedSub2GroupId, setSelectedSub2GroupId] = useState("");
+    const [sub2GroupsBusy, setSub2GroupsBusy] = useState(false);
+    const [sub2Busy, setSub2Busy] = useState(false);
 
     const activeConnections = useMemo(
         () => connections.filter((connection) => connection.status !== "disconnected"),
@@ -239,7 +273,7 @@ export function App() {
                 address.forwarding_mailbox_email &&
                 activeMailboxes.some((mailbox) => mailbox.email === address.forwarding_mailbox_email)
             ))
-            .sort((a, b) => b.id - a.id)[0];
+            .sort((a, b) => b.id - a.id)[ 0 ];
         return item?.forwarding_mailbox_email ?? "";
     }, [activeMailboxes, duckAddresses, selectedDuckAccount?.id]);
 
@@ -265,7 +299,7 @@ export function App() {
                 ?? activeMailboxes.find((mailbox) => mailbox.connection_id === selectedConnection.id)?.email
                 ?? "";
         }
-        return activeMailboxes[0]?.email ?? "";
+        return activeMailboxes[ 0 ]?.email ?? "";
     }, [activeMailboxes, labeledDuckForwardingMailbox, lastDuckForwardingMailbox, selectedConnection]);
 
     const listenerSummary = useMemo(() => {
@@ -359,6 +393,9 @@ export function App() {
     async function loadMail(id: number) {
         const detail = await fetchMail(id);
         setSelectedMail(detail);
+        setMails((items) => items.map((mail) => (
+            mail.id === detail.id ? {...mail, read_at: detail.read_at} : mail
+        )));
     }
 
     async function loadListeners() {
@@ -390,7 +427,7 @@ export function App() {
         setDuckAddresses((current) => {
             if (!accountId) return items;
             const others = current.filter((item) => item.account_id !== accountId);
-            return [ ...items, ...others ];
+            return [...items, ...others];
         });
         return items;
     }
@@ -423,7 +460,9 @@ export function App() {
         loadConnections().catch(reportError);
         loadMailboxes().catch(reportError);
         loadServerListenerSettings().catch(reportError);
-        loadDuckNetworkSettings().catch(reportError);
+        loadSystemNetworkSettings().catch(reportError);
+        loadTelegramSettings().catch(reportError);
+        loadSub2Settings().catch(reportError);
         loadDuckAccounts()
             .then((items) => {
                 const first = items.find((item) => item.status !== "disabled");
@@ -466,7 +505,7 @@ export function App() {
 
     useEffect(() => {
         if (!password) return;
-        const intervalMs = LISTENER_STATUS_REFRESH_MS[listenerStatusRefreshInterval];
+        const intervalMs = LISTENER_STATUS_REFRESH_MS[ listenerStatusRefreshInterval ];
         if (!intervalMs) return;
         const timer = window.setInterval(() => {
             loadListeners();
@@ -485,9 +524,15 @@ export function App() {
     }, [password, view, selectedDuckAccount?.id]);
 
     useEffect(() => {
+        if (!password || view !== "accountPush") return;
+        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
+        loadSub2Groups().catch(reportError);
+    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
+
+    useEffect(() => {
         if (!password || view !== "duck") return;
         if (selectedDuckAccountId && activeDuckAccounts.some((account) => account.id === selectedDuckAccountId)) return;
-        setSelectedDuckAccountId(activeDuckAccounts[0]?.id ?? "");
+        setSelectedDuckAccountId(activeDuckAccounts[ 0 ]?.id ?? "");
     }, [activeDuckAccounts, password, selectedDuckAccountId, view]);
 
     useEffect(() => {
@@ -647,54 +692,161 @@ export function App() {
         }
     }
 
-    function applyDuckNetworkSettings(settings: DuckNetworkSettings) {
-        setDuckNetworkSettings(settings);
-        setDuckNetworkProxyInput(settings.proxyUrl);
-        setDuckNetworkTimeoutInput(String(settings.timeoutMs));
+    function applySystemNetworkSettings(settings: SystemNetworkSettings) {
+        setSystemProxyInput(settings.proxyUrl);
+        setSystemTimeoutInput(String(settings.timeoutMs));
     }
 
-    async function loadDuckNetworkSettings() {
+    async function loadSystemNetworkSettings() {
         try {
-            applyDuckNetworkSettings(await fetchDuckNetworkSettings());
+            applySystemNetworkSettings(await fetchSystemNetworkSettings());
         } catch (err) {
             reportError(err);
         }
     }
 
-    async function saveServerListenerSettings(next: ListenerSettings) {
-        setServerListenerSettings(next);
-        setServerListenerSettingsBusy(true);
-        try {
-            const saved = await updateListenerSettings(next);
-            setServerListenerSettings(saved);
-            showStatus("服务端监听设置已保存");
-        } catch (err) {
-            reportError(err);
-            await loadServerListenerSettings();
-        } finally {
-            setServerListenerSettingsBusy(false);
-        }
-    }
-
-    async function handleSaveDuckNetworkSettings() {
-        const timeoutMs = Number(duckNetworkTimeoutInput);
+    async function handleSaveSettings() {
+        const timeoutMs = Number(systemTimeoutInput);
         if (!Number.isFinite(timeoutMs)) {
-            showError("Duck 请求超时时间必须是数字");
+            showError("系统请求超时时间必须是数字");
             return;
         }
-        setDuckNetworkSettingsBusy(true);
+        setSettingsBusy(true);
         try {
-            const saved = await updateDuckNetworkSettings({
-                proxyUrl: duckNetworkProxyInput.trim(),
-                timeoutMs
-            });
-            applyDuckNetworkSettings(saved);
-            showStatus("Duck 代理设置已保存");
+            const [listenerSaved, networkSaved, telegramSaved, sub2Saved] = await Promise.all([
+                updateListenerSettings(serverListenerSettings),
+                updateSystemNetworkSettings({
+                    proxyUrl: systemProxyInput.trim(),
+                    timeoutMs
+                }),
+                updateTelegramSettings({
+                    enabled: telegramEnabledInput,
+                    chatId: telegramChatIdInput.trim(),
+                    botToken: telegramBotTokenInput.trim() || undefined
+                }),
+                updateSub2Settings({
+                    apiUrl: sub2ApiUrlInput.trim(),
+                    apiKey: sub2ApiKeyInput.trim() || undefined
+                })
+            ]);
+            setServerListenerSettings(listenerSaved);
+            applySystemNetworkSettings(networkSaved);
+            applyTelegramSettings(telegramSaved);
+            applySub2Settings(sub2Saved);
+            showStatus("系统配置已保存");
         } catch (err) {
             reportError(err);
-            await loadDuckNetworkSettings();
+            await Promise.all([
+                loadServerListenerSettings(),
+                loadSystemNetworkSettings(),
+                loadTelegramSettings(),
+                loadSub2Settings()
+            ]);
         } finally {
-            setDuckNetworkSettingsBusy(false);
+            setSettingsBusy(false);
+        }
+    }
+
+    function applyTelegramSettings(settings: TelegramSettings) {
+        setTelegramSettings(settings);
+        setTelegramEnabledInput(settings.enabled);
+        setTelegramChatIdInput(settings.chatId);
+        setTelegramBotTokenInput("");
+    }
+
+    async function loadTelegramSettings() {
+        try {
+            applyTelegramSettings(await fetchTelegramSettings());
+        } catch (err) {
+            reportError(err);
+        }
+    }
+
+    function applySub2Settings(settings: Sub2Settings) {
+        setSub2Settings(settings);
+        setSub2ApiUrlInput(settings.apiUrl);
+        setSub2ApiKeyInput("");
+    }
+
+    async function loadSub2Settings() {
+        try {
+            applySub2Settings(await fetchSub2Settings());
+        } catch (err) {
+            reportError(err);
+        }
+    }
+
+    async function loadSub2Groups() {
+        setSub2GroupsBusy(true);
+        try {
+            const groups = await fetchSub2Groups();
+            setSub2Groups(groups);
+            setSelectedSub2GroupId((current) => {
+                if (current && groups.some((group) => String(group.id) === current)) return current;
+                return groups[ 0 ]?.id ? String(groups[ 0 ].id) : "";
+            });
+        } catch (err) {
+            setSub2Groups([]);
+            setSelectedSub2GroupId("");
+            reportError(err);
+        } finally {
+            setSub2GroupsBusy(false);
+        }
+    }
+
+    function parseSub2SourceInput(): unknown {
+        if (!sub2SourceJson.trim()) {
+            throw new Error("请输入账号 JSON");
+        }
+        return JSON.parse(sub2SourceJson);
+    }
+
+    async function handleConvertSub2Account() {
+        setSub2Busy(true);
+        try {
+            const data = await convertSub2Account(parseSub2SourceInput());
+            setSub2PreviewJson(JSON.stringify(data, null, 2));
+            showStatus("账号 JSON 已转换");
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setSub2Busy(false);
+        }
+    }
+
+    async function handlePushSub2Account() {
+        const groupId = Number(selectedSub2GroupId);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            showError("请选择要推送到的 Sub2 分组");
+            return;
+        }
+        setSub2Busy(true);
+        try {
+            const result = await pushSub2Account(parseSub2SourceInput(), groupId);
+            setSub2PreviewJson(JSON.stringify(result.data, null, 2));
+            showStatus("账号已推送到 Sub2API");
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setSub2Busy(false);
+        }
+    }
+
+    async function handleSendTelegramMessage() {
+        const text = telegramMessage.trim();
+        if (!text) {
+            showError("请输入要发送的消息内容");
+            return;
+        }
+        setTelegramSendBusy(true);
+        try {
+            await sendTelegramNotification(text);
+            setTelegramMessage("");
+            showStatus("Telegram 消息已发送");
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setTelegramSendBusy(false);
         }
     }
 
@@ -873,7 +1025,9 @@ export function App() {
         );
     }
 
-    const unreadCount = mails.length;
+    const mailTotal = mails.length;
+    const readCount = mails.filter((mail) => mail.read_at).length;
+    const unreadCount = mailTotal - readCount;
     const onlineConnections = activeConnections.filter((connection) => connection.connected).length;
     const activeDuckAddressCount = duckAddresses.filter((address) => address.status === "active").length;
 
@@ -934,6 +1088,13 @@ export function App() {
                         <span>Duck 邮箱</span>
                         <span className="count">{activeDuckAddressCount}</span>
                     </button>
+                    <button className={view === "accountPush" ? "active" : ""} onClick={() => setView("accountPush")}>
+                        <span>账号推送</span>
+                    </button>
+                    <button className={view === "notifications" ? "active" : ""}
+                            onClick={() => setView("notifications")}>
+                        <span>消息通知</span>
+                    </button>
                     <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
                         <span>系统设置</span>
                     </button>
@@ -947,6 +1108,8 @@ export function App() {
                         <span>监听通道</span><span>{listenerSummary.running} / {listenerSummary.total}</span></div>
                     <div className="health-row"><span>Duck 邮箱</span><span>{activeDuckAddressCount}</span></div>
                     <div className="health-row"><span>待处理异常</span><span>{listenerSummary.errors}</span></div>
+                    <div className="health-row"><span>邮件总共</span><span>{mailTotal}</span></div>
+                    <div className="health-row"><span>已读/未读</span><span>{readCount} / {unreadCount}</span></div>
                 </div>
             </aside>
 
@@ -1006,7 +1169,7 @@ export function App() {
                             <button
                                 className={`sync-btn ${mailboxSyncBusy ? "syncing" : ""}`}
                                 onClick={handleSyncMailboxes}
-                                disabled={mailboxSyncBusy || (selectedConnectionId ? !selectedConnection?.hasDashboardCookie : activeConnections.length === 0)}
+                                disabled={mailboxSyncBusy || ( selectedConnectionId ? !selectedConnection?.hasDashboardCookie : activeConnections.length === 0 )}
                                 title={t("toolbar.syncHint")}
                                 aria-busy={mailboxSyncBusy}
                             >
@@ -1055,12 +1218,18 @@ export function App() {
                 {view === "dashboard" && (
                     <section className="dashboard-page">
                         <div className="hero-board">
-                            <h2>{onlineConnections} 个连接正在服务 {activeMailboxes.length} 个子邮箱，当前列表有 {mails.length} 封邮件。</h2>
-                            <p>{listenerSummary.errors > 0 ? "存在监听异常，建议先进入连接管理处理。" : "连接和监听状态正常，可以继续管理邮箱或查看收件。"}</p>
+                            <h2>{onlineConnections} 个连接正在服务 {activeMailboxes.length} 个子邮箱，当前列表共 {mailTotal} 封邮件。</h2>
+                            <p>
+                                {listenerSummary.errors > 0 ? "存在监听异常，建议先进入连接管理处理。" : "连接和监听状态正常，可以继续管理邮箱或查看收件。"}
+                                {selectedMailbox ? ` 当前邮件统计范围：${selectedMailbox}。` : " 当前邮件统计范围：全部邮箱。"}
+                            </p>
                             <div className="hero-actions">
                                 <button className="primary" onClick={() => setView("connections")}>查看连接</button>
                                 <button onClick={() => setView("mailboxes")}>管理邮箱</button>
                                 <button onClick={() => setView("inbox")}>查看邮件</button>
+                                <button
+                                    onClick={() => loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError)}>刷新统计
+                                </button>
                             </div>
                         </div>
                         <div className="stats-grid">
@@ -1072,7 +1241,14 @@ export function App() {
                             </div>
                             <div className="stat-card"><span>子邮箱总数</span><strong>{activeMailboxes.length}</strong>
                             </div>
-                            <div className="stat-card"><span>Duck 邮箱</span><strong>{activeDuckAddressCount}</strong></div>
+                            <div className="stat-card"><span>Duck 邮箱</span><strong>{activeDuckAddressCount}</strong>
+                            </div>
+                            <div className="stat-card">
+                                <span>当前列表总共</span><strong>{mailTotal}</strong>
+                            </div>
+                            <div className="stat-card">
+                                <span>已读/未读</span><strong>{readCount} / {unreadCount}</strong>
+                            </div>
                         </div>
                     </section>
                 )}
@@ -1179,7 +1355,8 @@ export function App() {
                         <div className="duck-bind">
                             <div>
                                 <strong>绑定 Duck Token</strong>
-                                <p>Token 只保存在后端数据库，前端只显示掩码。接口来自 DuckDuckGo Email Protection 的非公开地址生成请求。</p>
+                                <p>Token 只保存在后端数据库，前端只显示掩码。接口来自 DuckDuckGo Email Protection
+                                    的非公开地址生成请求。</p>
                             </div>
                             <input
                                 value={duckLabel}
@@ -1225,7 +1402,8 @@ export function App() {
                                         </SelectTrigger>
                                         <SelectContent>
                                             {activeMailboxes.map((mailbox) => (
-                                                <SelectItem key={mailbox.id} value={mailbox.email}>{mailbox.email}</SelectItem>
+                                                <SelectItem key={mailbox.id}
+                                                            value={mailbox.email}>{mailbox.email}</SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
@@ -1272,7 +1450,9 @@ export function App() {
                                             <span className="time-cell">{item.note ?? "—"}</span>
                                             <span className="time-cell">{item.created_at}</span>
                                             <div className="ops">
-                                                <button onClick={() => navigator.clipboard.writeText(item.address)}>复制</button>
+                                                <button
+                                                    onClick={() => navigator.clipboard.writeText(item.address)}>复制
+                                                </button>
                                                 <button onClick={() => setDuckAddressToDelete(item)}>删除记录</button>
                                             </div>
                                         </div>
@@ -1299,6 +1479,163 @@ export function App() {
                         onError={reportError}
                         adminPassword={password}
                     />
+                )}
+
+                {view === "accountPush" && (
+                    <section className="account-push-page">
+                        <div className="push-panel">
+                            <div className="push-head">
+                                <div>
+                                    <strong>ChatGPT 账号推送</strong>
+                                    <p>粘贴 https://chatgpt.com/api/auth/session 结构的账号 JSON，系统会转换成 Sub2
+                                        数据格式后推送到 Sub2API。</p>
+                                </div>
+                                <span
+                                    className={`tag ${sub2Settings.apiUrl && sub2Settings.hasApiKey ? "ok" : "muted"}`}>
+                                    <span
+                                        className={`dot ${sub2Settings.apiUrl && sub2Settings.hasApiKey ? "live" : ""}`}/>
+                                    {sub2Settings.apiUrl && sub2Settings.hasApiKey ? "已配置" : "未配置"}
+                                </span>
+                            </div>
+                            <div className="push-grid">
+                                <div className="push-editor">
+                                    <div className="push-editor-head">
+                                        <span>原始 JSON</span>
+                                        <button
+                                            onClick={() => {
+                                                setSub2SourceJson("");
+                                                setSub2PreviewJson("");
+                                            }}
+                                            disabled={sub2Busy || ( !sub2SourceJson && !sub2PreviewJson )}
+                                        >
+                                            清空
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        className="push-textarea"
+                                        value={sub2SourceJson}
+                                        onChange={(event) => setSub2SourceJson(event.target.value)}
+                                        placeholder="粘贴 https://chatgpt.com/api/auth/session 结构的账号 JSON 内容"
+                                        spellCheck={false}
+                                        disabled={sub2Busy}
+                                    />
+                                </div>
+                                <div className="push-editor">
+                                    <div className="push-editor-head">
+                                        <span>Sub2 JSON 预览</span>
+                                        <button
+                                            onClick={() => sub2PreviewJson && navigator.clipboard.writeText(sub2PreviewJson)}
+                                            disabled={!sub2PreviewJson}
+                                        >
+                                            复制
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        className="push-textarea preview"
+                                        value={sub2PreviewJson}
+                                        readOnly
+                                        placeholder="点击转换后显示 toSub2.json 格式"
+                                        spellCheck={false}
+                                    />
+                                </div>
+                            </div>
+                            <div className="push-actions">
+                                <span>
+                                    {sub2Settings.apiUrl
+                                        ? `推送地址：${sub2Settings.apiUrl}`
+                                        : "请先在系统设置里配置 Sub2API 地址和 APIKey"}
+                                </span>
+                                <div className="push-group-select">
+                                    <span>推送分组</span>
+                                    <Select
+                                        value={selectedSub2GroupId}
+                                        onValueChange={setSelectedSub2GroupId}
+                                        disabled={sub2Busy || sub2GroupsBusy || !sub2Groups.length}
+                                    >
+                                        <SelectTrigger className="toolbar-select push-group-trigger">
+                                            <SelectValue placeholder={sub2GroupsBusy ? "加载中" : "选择分组"} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {sub2Groups.map((group) => (
+                                                <SelectItem key={group.id} value={String(group.id)}>
+                                                    {group.name ? `${group.name} (#${group.id})` : `分组 #${group.id}`}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {!sub2GroupsBusy && !sub2Groups.length && <span className="push-group-empty">暂无可用分组</span>}
+                                </div>
+                                <div>
+                                    <button
+                                        onClick={loadSub2Groups}
+                                        disabled={sub2Busy || sub2GroupsBusy || !sub2Settings.apiUrl || !sub2Settings.hasApiKey}
+                                    >
+                                        {sub2GroupsBusy ? "刷新中" : "刷新分组"}
+                                    </button>
+                                    <button onClick={handleConvertSub2Account}
+                                            disabled={sub2Busy || !sub2SourceJson.trim()}>
+                                        {sub2Busy ? "处理中" : "转换预览"}
+                                    </button>
+                                    <button
+                                        className="primary"
+                                        onClick={handlePushSub2Account}
+                                        disabled={sub2Busy || !sub2SourceJson.trim() || !selectedSub2GroupId}
+                                    >
+                                        {sub2Busy ? "推送中" : "推送账号"}
+                                    </button>
+                                </div>
+                            </div>
+                            {( !sub2Settings.apiUrl || !sub2Settings.hasApiKey ) && (
+                                <div className="empty-state">
+                                    <span className="big">Sub2API 尚未配置完整</span>
+                                    请先到系统设置里填写 Sub2API 地址和 APIKey。
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                )}
+
+                {view === "notifications" && (
+                    <section className="notifications-page">
+                        <div className="notify-panel">
+                            <div className="notify-head">
+                                <div>
+                                    <strong>Telegram 消息发送</strong>
+                                    <p>把要转发的内容粘贴到这里，点击发送后由已配置的机器人发送到指定 Chat。</p>
+                                </div>
+                                <span
+                                    className={`tag ${telegramSettings.enabled && telegramSettings.hasBotToken && telegramSettings.chatId ? "ok" : "muted"}`}>
+                                    <span
+                                        className={`dot ${telegramSettings.enabled && telegramSettings.hasBotToken && telegramSettings.chatId ? "live" : ""}`}/>
+                                    {telegramSettings.enabled ? "已启用" : "未启用"}
+                                </span>
+                            </div>
+                            <textarea
+                                className="notify-textarea"
+                                value={telegramMessage}
+                                onChange={(event) => setTelegramMessage(event.target.value)}
+                                placeholder="输入要发送到 Telegram 的内容"
+                                maxLength={4096}
+                                disabled={telegramSendBusy}
+                            />
+                            <div className="notify-actions">
+                                <span>{telegramMessage.trim().length} / 4096</span>
+                                <button
+                                    className="primary"
+                                    onClick={handleSendTelegramMessage}
+                                    disabled={telegramSendBusy || !telegramMessage.trim()}
+                                >
+                                    {telegramSendBusy ? "发送中" : "发送消息"}
+                                </button>
+                            </div>
+                            {( !telegramSettings.enabled || !telegramSettings.hasBotToken || !telegramSettings.chatId ) && (
+                                <div className="empty-state">
+                                    <span className="big">Telegram 尚未配置完整</span>
+                                    请先到系统设置里填写 Bot Token、Chat ID 并启用消息通知。
+                                </div>
+                            )}
+                        </div>
+                    </section>
                 )}
 
                 {view === "settings" && (
@@ -1357,11 +1694,11 @@ export function App() {
                                 </span>
                                 <Select
                                     value={serverListenerSettings.logMode}
-                                    onValueChange={(value) => saveServerListenerSettings({
+                                    onValueChange={(value) => setServerListenerSettings({
                                         ...serverListenerSettings,
                                         logMode: value as ListenerSettings["logMode"]
                                     })}
-                                    disabled={serverListenerSettingsBusy}
+                                    disabled={settingsBusy}
                                 >
                                     <SelectTrigger className="toolbar-select">
                                         <SelectValue placeholder="日志模式"/>
@@ -1380,11 +1717,11 @@ export function App() {
                                 </span>
                                 <Select
                                     value={serverListenerSettings.reconnectMode}
-                                    onValueChange={(value) => saveServerListenerSettings({
+                                    onValueChange={(value) => setServerListenerSettings({
                                         ...serverListenerSettings,
                                         reconnectMode: value as ListenerSettings["reconnectMode"]
                                     })}
-                                    disabled={serverListenerSettingsBusy}
+                                    disabled={settingsBusy}
                                 >
                                     <SelectTrigger className="toolbar-select">
                                         <SelectValue placeholder="重连策略"/>
@@ -1397,44 +1734,103 @@ export function App() {
                             </div>
                             <div className="setting-row">
                                 <span>
-                                    <strong>Duck 代理地址</strong>
-                                    <small>容器无法直连 DuckDuckGo 时填写，例如 http://host.docker.internal:7890。留空表示直连。</small>
+                                    <strong>系统代理地址</strong>
+                                    <small>容器无法直连外部服务时填写，例如 http://host.docker.internal:7890。Duck 和 Telegram 都会复用该代理。</small>
                                 </span>
                                 <input
-                                    value={duckNetworkProxyInput}
-                                    onChange={(event) => setDuckNetworkProxyInput(event.target.value)}
+                                    value={systemProxyInput}
+                                    onChange={(event) => setSystemProxyInput(event.target.value)}
                                     placeholder="http://host:port"
-                                    disabled={duckNetworkSettingsBusy}
+                                    disabled={settingsBusy}
                                 />
                             </div>
                             <div className="setting-row">
                                 <span>
-                                    <strong>Duck 请求超时</strong>
-                                    <small>生成 Duck 邮箱时等待 DuckDuckGo 响应的最长时间，单位毫秒。</small>
+                                    <strong>系统请求超时</strong>
+                                    <small>访问外部服务时等待响应的最长时间，单位毫秒。</small>
                                 </span>
                                 <input
                                     type="number"
                                     min={1000}
                                     max={120000}
                                     step={1000}
-                                    value={duckNetworkTimeoutInput}
-                                    onChange={(event) => setDuckNetworkTimeoutInput(event.target.value)}
-                                    disabled={duckNetworkSettingsBusy}
+                                    value={systemTimeoutInput}
+                                    onChange={(event) => setSystemTimeoutInput(event.target.value)}
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <label className="setting-row">
+                                <span>
+                                    <strong>Telegram 消息通知</strong>
+                                    <small>启用后可在“消息通知”菜单里手动发送内容到 Telegram。</small>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={telegramEnabledInput}
+                                    onChange={(event) => setTelegramEnabledInput(event.target.checked)}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Telegram Bot Token</strong>
+                                    <small>{telegramSettings.botTokenPreview ? `当前已配置：${telegramSettings.botTokenPreview}` : "从 BotFather 获取，保存后不会明文显示。"}</small>
+                                </span>
+                                <input
+                                    type="password"
+                                    value={telegramBotTokenInput}
+                                    onChange={(event) => setTelegramBotTokenInput(event.target.value)}
+                                    placeholder={telegramSettings.hasBotToken ? "留空则保留当前 Token" : "Bot Token"}
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Telegram Chat ID</strong>
+                                    <small>私聊、群组或频道的 Chat ID。机器人需要先能向该 Chat 发言。</small>
+                                </span>
+                                <input
+                                    value={telegramChatIdInput}
+                                    onChange={(event) => setTelegramChatIdInput(event.target.value)}
+                                    placeholder="Chat ID"
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Sub2API 地址</strong>
+                                    <small>填写 Sub2API 根地址或完整 /admin/accounts/data 导入地址，根地址会自动补齐 /api/v1/admin/accounts/data。</small>
+                                </span>
+                                <input
+                                    value={sub2ApiUrlInput}
+                                    onChange={(event) => setSub2ApiUrlInput(event.target.value)}
+                                    placeholder="https://sub2.example.com"
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Sub2API APIKey</strong>
+                                    <small>{sub2Settings.apiKeyPreview ? `当前已配置：${sub2Settings.apiKeyPreview}` : "用于调用 Sub2API 管理接口，保存后不会明文显示。"}</small>
+                                </span>
+                                <input
+                                    type="password"
+                                    value={sub2ApiKeyInput}
+                                    onChange={(event) => setSub2ApiKeyInput(event.target.value)}
+                                    placeholder={sub2Settings.hasApiKey ? "留空则保留当前 APIKey" : "APIKey"}
+                                    disabled={settingsBusy}
                                 />
                             </div>
                             <div className="settings-actions">
-                                <button
-                                    className="primary"
-                                    onClick={handleSaveDuckNetworkSettings}
-                                    disabled={duckNetworkSettingsBusy || (
-                                        duckNetworkProxyInput.trim() === duckNetworkSettings.proxyUrl &&
-                                        String(Number(duckNetworkTimeoutInput)) === String(duckNetworkSettings.timeoutMs)
-                                    )}
-                                >
-                                    {duckNetworkSettingsBusy ? "保存中" : "保存 Duck 代理"}
-                                </button>
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>
                                     {listenerBusy ? "刷新中" : "立即刷新监听状态"}
+                                </button>
+                                <button
+                                    className="primary"
+                                    onClick={handleSaveSettings}
+                                    disabled={settingsBusy}
+                                >
+                                    {settingsBusy ? "保存中" : "保存配置"}
                                 </button>
                             </div>
                         </div>

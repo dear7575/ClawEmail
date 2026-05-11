@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS mails (
   raw_json TEXT NOT NULL,
   header_raw TEXT,
   has_attachments INTEGER NOT NULL DEFAULT 0,
+  read_at TEXT,
   received_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(mailbox_email, provider_mail_id)

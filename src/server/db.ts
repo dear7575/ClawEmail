@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS mails (
   raw_json TEXT NOT NULL,
   header_raw TEXT,
   has_attachments INTEGER NOT NULL DEFAULT 0,
+  read_at TEXT,
   received_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(mailbox_email, provider_mail_id)
@@ -129,12 +130,22 @@ function ensureColumn(table: string, column: string, definition: string): void {
   db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }
 
+function ensureMailReadColumn(): void {
+  const rows = db.prepare("PRAGMA table_info(mails)").all() as Array<{ name: string }>;
+  const exists = rows.some((row) => row.name === "read_at");
+  ensureColumn("mails", "read_at", "TEXT");
+  if (!exists) {
+    db.prepare("UPDATE mails SET read_at = CURRENT_TIMESTAMP WHERE read_at IS NULL").run();
+  }
+}
+
 ensureColumn("mailboxes", "comm_level", "INTEGER");
 ensureColumn("mailboxes", "ext_receive_type", "INTEGER");
 ensureColumn("mailboxes", "ext_send_type", "INTEGER");
 ensureColumn("mailboxes", "connection_id", "TEXT");
 ensureColumn("mailboxes", "provider_mailbox_id", "TEXT");
 ensureColumn("mails", "connection_id", "TEXT");
+ensureMailReadColumn();
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_mailboxes_connection_id ON mailboxes(connection_id);
@@ -194,6 +205,7 @@ export type MailRow = {
   raw_json: string;
   header_raw: string | null;
   has_attachments: number;
+  read_at: string | null;
   received_at: string | null;
   created_at: string;
 };
@@ -595,6 +607,11 @@ export function listMailProviderIds(mailboxEmail: string, connectionId?: string)
 
 export function getMailById(id: number): MailRow | undefined {
   return db.prepare("SELECT * FROM mails WHERE id = ?").get(id) as MailRow | undefined;
+}
+
+export function markMailRead(id: number): MailRow | undefined {
+  db.prepare("UPDATE mails SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ?").run(id);
+  return getMailById(id);
 }
 
 export function getMailByProviderId(mailboxEmail: string, providerMailId: string, connectionId?: string): MailRow | undefined {

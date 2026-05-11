@@ -130,13 +130,19 @@ export function InboxView({
           )}
           {mails.map((mail) => {
             const time = mailTime(mail);
+            const unread = !mail.read_at;
             return (
               <button
                 key={mail.id}
-                className={`mail-row ${selectedMail?.id === mail.id ? "selected" : ""}`}
+                className={`mail-row ${selectedMail?.id === mail.id ? "selected" : ""} ${unread ? "unread" : "read"}`}
                 onClick={() => onSelectMail(mail.id)}
               >
-                <span className="subj">{mail.subject || t("inbox.subject.empty")}</span>
+                <span className="subj">
+                  {mail.subject || t("inbox.subject.empty")}
+                  <span className={`read-badge ${unread ? "unread" : "read"}`}>
+                    {unread ? "未读" : "已读"}
+                  </span>
+                </span>
                 <span className="time">{fmtTime(time.value, time.source)}</span>
                 <span className="meta">
                   <span className="from">{mail.source || t("inbox.unknownSender")}</span>

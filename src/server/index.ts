@@ -11,6 +11,8 @@ import { sendRoutes } from "./routes/send";
 import { eventRoutes } from "./routes/events";
 import { clawAuthRoutes } from "./routes/claw-auth";
 import { duckRoutes } from "./routes/duck";
+import { telegramRoutes } from "./routes/telegram";
+import { sub2Routes } from "./routes/sub2";
 import { startAllMailboxListeners } from "./listener-manager";
 import { hasClawMailConfig } from "./runtime-config";
 
@@ -54,6 +56,8 @@ await sendRoutes(app);
 await eventRoutes(app);
 await clawAuthRoutes(app);
 await duckRoutes(app);
+await telegramRoutes(app);
+await sub2Routes(app);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webRoot = join(__dirname, "../web");

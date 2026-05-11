@@ -41,7 +41,7 @@ function attachmentList(mail: MailDetail) {
 
 async function persistIncomingMail(connectionId: string, mailboxEmail: string, providerMailId: string): Promise<number> {
   const client = getMailClient(mailboxEmail, connectionId);
-  const mail = await client.mail.read({ id: providerMailId, markRead: true });
+  const mail = await client.mail.read({ id: providerMailId, markRead: false });
   const row = saveMail({
     connectionId,
     providerMailId,

@@ -71,6 +71,7 @@ const SCHEMA_STATEMENTS = [
       raw_json TEXT NOT NULL,
       header_raw TEXT,
       has_attachments INTEGER NOT NULL DEFAULT 0,
+      read_at TEXT,
       received_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(mailbox_email, provider_mail_id)
@@ -140,6 +141,10 @@ export async function ensureSchema(db: D1Database): Promise<void> {
   await ensureColumn(db, "mailboxes", "connection_id", "TEXT");
   await ensureColumn(db, "mailboxes", "provider_mailbox_id", "TEXT");
   await ensureColumn(db, "mails", "connection_id", "TEXT");
+  const mailReadColumnAdded = await ensureColumn(db, "mails", "read_at", "TEXT");
+  if (mailReadColumnAdded) {
+    await db.prepare("UPDATE mails SET read_at = CURRENT_TIMESTAMP WHERE read_at IS NULL").run();
+  }
   await db.prepare("UPDATE mailboxes SET connection_id = ? WHERE connection_id IS NULL").bind(LEGACY_CONNECTION_ID).run();
   await db.prepare("UPDATE mailboxes SET provider_mailbox_id = id WHERE provider_mailbox_id IS NULL").run();
   await db.prepare("UPDATE mails SET connection_id = ? WHERE connection_id IS NULL").bind(LEGACY_CONNECTION_ID).run();
@@ -149,10 +154,11 @@ function rowChanges(result: { meta?: { changes?: number } }): number {
   return result.meta?.changes ?? 0;
 }
 
-async function ensureColumn(db: D1Database, table: string, column: string, definition: string): Promise<void> {
+async function ensureColumn(db: D1Database, table: string, column: string, definition: string): Promise<boolean> {
   const rows = await all<{ name: string }>(db, `PRAGMA table_info(${table})`);
-  if (rows.some((row) => row.name === column)) return;
+  if (rows.some((row) => row.name === column)) return false;
   await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  return true;
 }
 
 async function all<T>(db: D1Database, sql: string, ...params: D1Value[]): Promise<T[]> {
@@ -419,6 +425,11 @@ export async function listMailProviderIds(db: D1Database, mailboxEmail: string):
 
 export async function getMailById(db: D1Database, id: number): Promise<MailRow | undefined> {
   return first<MailRow>(db, "SELECT * FROM mails WHERE id = ?", id);
+}
+
+export async function markMailRead(db: D1Database, id: number): Promise<MailRow | undefined> {
+  await db.prepare("UPDATE mails SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ?").bind(id).run();
+  return getMailById(db, id);
 }
 
 export async function getMailByProviderId(

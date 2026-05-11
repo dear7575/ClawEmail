@@ -1327,9 +1327,16 @@ a:hover {
 .dashboard-page,
 .connections-page,
 .duck-page,
+.account-push-page,
+.notifications-page,
 .settings-page {
     display: grid;
     gap: 16px;
+}
+
+.account-push-page {
+    flex: 1;
+    min-height: 0;
 }
 
 .hero-board {
@@ -1366,7 +1373,7 @@ a:hover {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 12px;
 }
 
@@ -1440,9 +1447,168 @@ a:hover {
 
 .settings-actions {
     display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
     justify-content: flex-end;
     border-top: 1px solid var(--border-soft);
     padding-top: 14px;
+}
+
+.notify-panel {
+    display: grid;
+    gap: 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    padding: 16px;
+}
+
+.notify-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.notify-head strong {
+    display: block;
+    font-size: 16px;
+}
+
+.notify-head p {
+    margin: 5px 0 0;
+    max-width: 76ch;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.notify-textarea {
+    min-height: 260px;
+    line-height: 1.55;
+}
+
+.notify-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.notify-actions span {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.push-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    gap: 14px;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    padding: 16px;
+}
+
+.push-head,
+.push-editor-head,
+.push-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.push-head {
+    align-items: flex-start;
+}
+
+.push-head strong {
+    display: block;
+    font-size: 16px;
+}
+
+.push-head p {
+    margin: 5px 0 0;
+    max-width: 100ch;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.push-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-height: 0;
+}
+
+.push-editor {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.push-editor-head span {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 850;
+}
+
+.push-textarea {
+    min-height: clamp(560px, calc(100vh - 340px), 860px);
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre;
+    overflow: auto;
+}
+
+.push-textarea.preview {
+    background: var(--muted);
+}
+
+.push-actions span {
+    min-width: 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.push-group-select {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: min(100%, 320px);
+}
+
+.push-group-select span {
+    white-space: nowrap;
+}
+
+.push-group-select .push-group-trigger {
+    min-width: 200px;
+    max-width: 320px;
+}
+
+.push-group-empty {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.push-actions > div {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .connection-bind {
@@ -1798,6 +1964,11 @@ a:hover {
     background: transparent;
     padding: 13px 14px;
     text-align: left;
+    position: relative;
+}
+
+.mail-row.unread {
+    background: color-mix(in srgb, var(--primary-soft) 48%, transparent);
 }
 
 .mail-row:hover {
@@ -1815,7 +1986,39 @@ a:hover {
     white-space: nowrap;
     color: var(--foreground);
     font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.mail-row.unread .subj {
     font-weight: 850;
+}
+
+.mail-row.read .subj {
+    font-weight: 650;
+    color: var(--muted-foreground);
+}
+
+.read-badge {
+    flex: 0 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 850;
+    line-height: 1.5;
+}
+
+.read-badge.unread {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: var(--primary-foreground);
+}
+
+.read-badge.read {
+    background: var(--muted);
+    color: var(--muted-foreground);
 }
 
 .mail-row .time {
@@ -2412,6 +2615,10 @@ a:hover {
     .duck-bind,
     .duck-generate {
         grid-template-columns: minmax(220px, 1fr) minmax(220px, 320px);
+    }
+
+    .push-grid {
+        grid-template-columns: 1fr;
     }
 
     .connection-bind .actions {

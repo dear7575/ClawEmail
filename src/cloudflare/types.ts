@@ -39,8 +39,15 @@ export type Env = {
   CLAW_PARENT_MAILBOX_ID?: string;
   CLAW_ROOT_PREFIX?: string;
   CLAW_DOMAIN?: string;
+  SYSTEM_PROXY_URL?: string;
+  SYSTEM_REQUEST_TIMEOUT_MS?: string;
   DUCK_PROXY_URL?: string;
   DUCK_REQUEST_TIMEOUT_MS?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
+  SUB2_API_URL?: string;
+  SUB2_API_KEY?: string;
+  SUB2_PROXY_TEMPLATE_JSON?: string;
 };
 
 export type MailboxRow = {
@@ -75,6 +82,7 @@ export type MailRow = {
   raw_json: string;
   header_raw: string | null;
   has_attachments: number;
+  read_at: string | null;
   received_at: string | null;
   created_at: string;
 };
