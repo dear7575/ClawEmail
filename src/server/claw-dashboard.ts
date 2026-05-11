@@ -50,11 +50,29 @@ const DASHBOARD_ORIGIN = "https://claw.163.com";
 const BASE_URL = `${DASHBOARD_ORIGIN}/mailserv-claw-dashboard/api/v1`;
 const PUBLIC_BASE_URL = `${DASHBOARD_ORIGIN}/mailserv-claw-dashboard/p/v1`;
 
-function getHeaders(): HeadersInit {
+function normalizeLoginEmail(email: string): string {
+  const normalized = email.trim().replace(/＠/g, "@").toLowerCase();
+  return normalized.includes("@") ? normalized : `${normalized}@163.com`;
+}
+
+function dashboardErrorMessage(message: string): string {
+  return message === "invalid email format" ? "请输入完整 163 登录邮箱" : message;
+}
+
+async function dashboardFetch(url: string, init: RequestInit, action: string): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? error.message : String(error);
+    throw new Error(`Claw dashboard ${action} request failed: ${detail}`);
+  }
+}
+
+function getHeaders(connectionId?: string | null): HeadersInit {
   return {
     accept: "application/json, text/plain, */*",
     "content-type": "application/json",
-    cookie: requireDashboardCookie()
+    cookie: requireDashboardCookie(connectionId)
   };
 }
 
@@ -105,7 +123,7 @@ export async function parseDashboardResponse<T>(response: Response): Promise<T> 
     throw new Error(`Claw dashboard returned non-JSON response: HTTP ${response.status}`);
   }
   if (!response.ok || body.success !== true || body.code !== 200) {
-    throw new Error(`Claw dashboard error: ${body.message || response.statusText}`);
+    throw new Error(`Claw dashboard error: ${dashboardErrorMessage(body.message || response.statusText)}`);
   }
   return body.result;
 }
@@ -113,6 +131,14 @@ export async function parseDashboardResponse<T>(response: Response): Promise<T> 
 function cookieHeaderFromSetCookie(headers: string[]): string {
   return headers
     .map((header) => header.split(";")[0]?.trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+function mergeCookieHeaders(headers: Array<string | undefined>): string {
+  return headers
+    .flatMap((header) => header?.split(";") ?? [])
+    .map((item) => item.trim())
     .filter(Boolean)
     .join("; ");
 }
@@ -134,66 +160,73 @@ function readSetCookie(response: Response): string {
   return "";
 }
 
-function authHeaders(cookie?: string): HeadersInit {
+function authHeaders(cookie?: string, connectionId?: string | null): HeadersInit {
   return {
     accept: "application/json, text/plain, */*",
-    cookie: cookie ?? requireDashboardCookie()
+    cookie: cookie ?? requireDashboardCookie(connectionId)
   };
 }
 
-export async function sendLoginCode(email: string): Promise<void> {
-  const response = await fetch(`${PUBLIC_BASE_URL}/auth/email/send-code`, {
+export async function sendLoginCode(email: string): Promise<string> {
+  const normalizedEmail = normalizeLoginEmail(email);
+  const response = await dashboardFetch(`${PUBLIC_BASE_URL}/auth/email/send-code`, {
     method: "POST",
     headers: {
       accept: "application/json, text/plain, */*",
       "content-type": "application/json",
       referer: `${DASHBOARD_ORIGIN}/projects/dashboard/`
     },
-    body: JSON.stringify({ email })
-  });
+    body: JSON.stringify({ email: normalizedEmail })
+  }, "send-code");
   await parseDashboardResponse<unknown>(response);
+  return readSetCookie(response);
 }
 
-export async function verifyLoginCode(email: string, code: string): Promise<string> {
-  const response = await fetch(`${PUBLIC_BASE_URL}/auth/email/verify-code`, {
+export async function verifyLoginCode(email: string, code: string, pendingCookie?: string): Promise<string> {
+  const normalizedEmail = normalizeLoginEmail(email);
+  const headers: HeadersInit = {
+    accept: "application/json, text/plain, */*",
+    "content-type": "application/json",
+    referer: `${DASHBOARD_ORIGIN}/projects/dashboard/`
+  };
+  if (pendingCookie) {
+    headers.cookie = pendingCookie;
+  }
+  const response = await dashboardFetch(`${PUBLIC_BASE_URL}/auth/email/verify-code`, {
     method: "POST",
-    headers: {
-      accept: "application/json, text/plain, */*",
-      "content-type": "application/json",
-      referer: `${DASHBOARD_ORIGIN}/projects/dashboard/`
-    },
-    body: JSON.stringify({ email, code })
-  });
+    headers,
+    body: JSON.stringify({ email: normalizedEmail, code })
+  }, "verify-code");
   await parseDashboardResponse<unknown>(response);
-  const cookie = readSetCookie(response);
+  const cookie = mergeCookieHeaders([pendingCookie, readSetCookie(response)]);
   if (!cookie) {
     throw new Error("Claw login did not return a session cookie");
   }
   return cookie;
 }
 
-export async function getAuthMe(cookie?: string): Promise<ClawUser | null> {
-  const response = await fetch(`${BASE_URL}/auth/me`, {
+export async function getAuthMe(cookie?: string, connectionId?: string | null): Promise<ClawUser | null> {
+  const response = await dashboardFetch(`${BASE_URL}/auth/me`, {
     method: "GET",
-    headers: authHeaders(cookie)
-  });
+    headers: authHeaders(cookie, connectionId)
+  }, "auth-me");
   return await parseDashboardResponse<ClawUser | null>(response);
 }
 
-export async function listWorkspaces(cookie?: string): Promise<ClawWorkspace[]> {
-  const response = await fetch(`${BASE_URL}/workspaces`, {
+export async function listWorkspaces(cookie?: string, connectionId?: string | null): Promise<ClawWorkspace[]> {
+  const response = await dashboardFetch(`${BASE_URL}/workspaces`, {
     method: "GET",
-    headers: authHeaders(cookie)
-  });
+    headers: authHeaders(cookie, connectionId)
+  }, "workspaces");
   const result = await parseDashboardResponse<any>(response);
   return Array.isArray(result?.workspaces) ? result.workspaces : [];
 }
 
-export async function listApiKeys(cookie?: string): Promise<ClawApiKey[]> {
-  const response = await fetch(`${BASE_URL}/api-keys`, {
+export async function listApiKeys(cookie?: string, connectionId?: string | null): Promise<ClawApiKey[]> {
+  const response = await dashboardFetch(`${BASE_URL}/api-keys`, {
     method: "GET",
-    headers: authHeaders(cookie)
-  });
+    headers: authHeaders(cookie, connectionId)
+  }, "api-keys");
   const result = await parseDashboardResponse<any>(response);
   const candidates =
     Array.isArray(result?.apiKeys) ? result.apiKeys :
@@ -203,7 +236,7 @@ export async function listApiKeys(cookie?: string): Promise<ClawApiKey[]> {
   return candidates.filter((item: any) => typeof item?.apiKey === "string");
 }
 
-export async function createMailbox(suffix: string): Promise<ClawMailbox> {
+export async function createMailbox(suffix: string, connectionId?: string | null): Promise<ClawMailbox> {
   const normalized = suffix.trim().toLowerCase();
   if (!/^[a-z0-9]{1,32}$/.test(normalized)) {
     throw new Error("suffix must contain 1-32 lowercase letters or digits");
@@ -211,25 +244,25 @@ export async function createMailbox(suffix: string): Promise<ClawMailbox> {
 
   const response = await fetch(`${BASE_URL}/mailboxes`, {
     method: "POST",
-    headers: getHeaders(),
+    headers: getHeaders(connectionId),
     body: JSON.stringify({
       prefix: normalized,
       displayName: normalized,
       mailboxType: "sub",
-      workspaceId: getWorkspaceId(),
-      parentMailboxId: getParentMailboxId()
+      workspaceId: getWorkspaceId(connectionId),
+      parentMailboxId: getParentMailboxId(connectionId)
     })
   });
 
   return normalizeMailbox(await parseDashboardResponse<any>(response));
 }
 
-export async function deleteMailbox(id: string): Promise<void> {
+export async function deleteMailbox(id: string, connectionId?: string | null): Promise<void> {
   const response = await fetch(`${BASE_URL}/mailboxes/delete?id=${encodeURIComponent(id)}`, {
     method: "POST",
     headers: {
       accept: "application/json, text/plain, */*",
-      cookie: requireDashboardCookie()
+      cookie: requireDashboardCookie(connectionId)
     }
   });
   await parseDashboardResponse<null>(response);
@@ -241,11 +274,12 @@ export async function updateMailboxCommunicationSettings(
     commLevel: number;
     extReceiveType?: number;
     extSendType?: number;
-  }
+  },
+  connectionId?: string | null
 ): Promise<void> {
   const response = await fetch(`${BASE_URL}/mailboxes/comm-settings?id=${encodeURIComponent(id)}`, {
     method: "POST",
-    headers: getHeaders(),
+    headers: getHeaders(connectionId),
     body: JSON.stringify(input)
   });
   await parseDashboardResponse<null>(response);
@@ -254,12 +288,13 @@ export async function updateMailboxCommunicationSettings(
 export async function listDashboardMailboxes(input: {
   cookie?: string;
   workspaceId?: string;
+  connectionId?: string | null;
 } = {}): Promise<ClawMailbox[]> {
-  const response = await fetch(`${BASE_URL}/mailboxes?workspaceId=${encodeURIComponent(input.workspaceId ?? getWorkspaceId())}`, {
+  const response = await fetch(`${BASE_URL}/mailboxes?workspaceId=${encodeURIComponent(input.workspaceId ?? getWorkspaceId(input.connectionId))}`, {
     method: "GET",
     headers: {
       accept: "application/json, text/plain, */*",
-      cookie: input.cookie ?? requireDashboardCookie()
+      cookie: input.cookie ?? requireDashboardCookie(input.connectionId)
     }
   });
   const result = await parseDashboardResponse<any>(response);

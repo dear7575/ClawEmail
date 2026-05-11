@@ -43,6 +43,8 @@ export type Env = {
 
 export type MailboxRow = {
   id: string;
+  connection_id: string | null;
+  provider_mailbox_id: string | null;
   email: string;
   prefix: string;
   display_name: string | null;
@@ -60,6 +62,7 @@ export type MailboxRow = {
 
 export type MailRow = {
   id: number;
+  connection_id: string | null;
   provider_mail_id: string;
   mailbox_email: string;
   source: string | null;
@@ -82,5 +85,22 @@ export type AttachmentRow = {
   content_type: string | null;
   size: number | null;
   created_at: string;
+};
+
+export type ConnectionRow = {
+  id: string;
+  label: string | null;
+  user_email: string | null;
+  workspace_id: string | null;
+  workspace_name: string | null;
+  parent_mailbox_id: string | null;
+  root_prefix: string | null;
+  domain: string;
+  api_key: string | null;
+  dashboard_cookie: string | null;
+  status: string;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 

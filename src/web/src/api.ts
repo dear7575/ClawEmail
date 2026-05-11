@@ -1,5 +1,7 @@
 export type Mailbox = {
   id: string;
+  connection_id: string | null;
+  provider_mailbox_id: string | null;
   email: string;
   prefix: string;
   display_name: string | null;
@@ -17,6 +19,7 @@ export type Mailbox = {
 
 export type MailSummary = {
   id: number;
+  connection_id: string | null;
   provider_mail_id: string;
   mailbox_email: string;
   source: string | null;
@@ -42,6 +45,7 @@ export type MailDetail = MailSummary & {
 };
 
 export type ClawAuthStatus = {
+  id: string | null;
   connected: boolean;
   hasApiKey: boolean;
   hasDashboardCookie: boolean;
@@ -53,9 +57,12 @@ export type ClawAuthStatus = {
   domain: string | null;
   apiKeyPrefix: string | null;
   apiKeySuffix: string | null;
+  status: string | null;
+  label: string | null;
 };
 
 export type ListenerSnapshot = {
+  connectionId?: string;
   email: string;
   status: string;
   startedAt?: string | null;
@@ -100,7 +107,15 @@ async function requestJson<T>(
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.error ?? `HTTP ${response.status}`);
+    const details = Array.isArray(data?.details)
+      ? data.details
+        .map((item: any) => {
+          const path = Array.isArray(item?.path) ? item.path.join(".") : "";
+          return path ? `${path}: ${item?.message ?? "invalid"}` : item?.message ?? "invalid";
+        })
+        .join("; ")
+      : "";
+    throw new Error(details ? `${data?.error ?? `HTTP ${response.status}`}: ${details}` : data?.error ?? `HTTP ${response.status}`);
   }
   return data as T;
 }
@@ -109,15 +124,58 @@ export async function verifyAdminPassword(value: string): Promise<ClawAuthStatus
   return requestJson<ClawAuthStatus>("/api/auth/claw/status", {}, value);
 }
 
-export async function fetchMailboxes(sync = false): Promise<Mailbox[]> {
-  const data = await requestJson<{ items: Mailbox[] }>(`/api/mailboxes${sync ? "?sync=true" : ""}`);
+export async function fetchConnections(): Promise<ClawAuthStatus[]> {
+  const data = await requestJson<{ items: ClawAuthStatus[] }>("/api/connections");
   return data.items;
 }
 
-export async function createMailbox(suffix: string): Promise<Mailbox> {
+export async function sendConnectionLoginCode(email: string): Promise<void> {
+  await requestJson<{ success: boolean }>("/api/connections/send-code", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function verifyConnectionLoginCode(email: string, code: string): Promise<{
+  connection: ClawAuthStatus;
+  auth: ClawAuthStatus;
+  syncedMailboxes: number;
+}> {
+  return requestJson("/api/connections/verify-code", {
+    method: "POST",
+    body: JSON.stringify({ email, code })
+  });
+}
+
+export async function refreshConnection(connectionId: string): Promise<{
+  connection: ClawAuthStatus;
+  auth: ClawAuthStatus;
+  syncedMailboxes: number;
+}> {
+  return requestJson(`/api/connections/${encodeURIComponent(connectionId)}/refresh`, {
+    method: "POST"
+  });
+}
+
+export async function disconnectConnection(connectionId: string): Promise<ClawAuthStatus> {
+  return requestJson(`/api/connections/${encodeURIComponent(connectionId)}/logout`, {
+    method: "POST"
+  });
+}
+
+export async function fetchMailboxes(sync = false, connectionId?: string): Promise<Mailbox[]> {
+  const params = new URLSearchParams();
+  if (sync) params.set("sync", "true");
+  if (connectionId) params.set("connectionId", connectionId);
+  const query = params.toString();
+  const data = await requestJson<{ items: Mailbox[] }>(`/api/mailboxes${query ? `?${query}` : ""}`);
+  return data.items;
+}
+
+export async function createMailbox(suffix: string, connectionId?: string): Promise<Mailbox> {
   return requestJson<Mailbox>("/api/mailboxes", {
     method: "POST",
-    body: JSON.stringify({ suffix })
+    body: JSON.stringify({ suffix, connectionId })
   });
 }
 
@@ -147,11 +205,13 @@ export async function fetchMails(
   mailbox?: string,
   limit = 50,
   offset = 0,
-  sync = false
+  sync = false,
+  connectionId?: string
 ): Promise<{ items: MailSummary[]; count: number }> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (mailbox) params.set("mailbox", mailbox);
   if (sync) params.set("sync", "true");
+  if (connectionId) params.set("connectionId", connectionId);
   return requestJson(`/api/mails?${params.toString()}`);
 }
 

@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { deleteMail, replyMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
+import { Button } from "./ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 type Props = {
   selectedMailbox: string;
@@ -64,6 +66,11 @@ export function InboxView({
   const [replyHtml, setReplyHtml] = useState(false);
   const [replyBusy, setReplyBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  useEffect(() => {
+    setDeleteConfirmOpen(false);
+  }, [selectedMail?.id]);
 
   async function handleReply() {
     if (!selectedMail || !replyBody) return;
@@ -87,11 +94,13 @@ export function InboxView({
   }
 
   async function handleDeleteMail() {
-    if (!selectedMail || !confirm(t("inbox.confirm.delete"))) return;
+    if (!selectedMail) return;
     setDeleteBusy(true);
     try {
-      await deleteMail(selectedMail.id);
-      onDeleted(selectedMail.id, t("flash.mail.deleted"));
+      const mailId = selectedMail.id;
+      await deleteMail(mailId);
+      setDeleteConfirmOpen(false);
+      onDeleted(mailId, t("flash.mail.deleted"));
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -168,7 +177,7 @@ export function InboxView({
                 ) : null}
                 <button
                   className="danger detail-delete"
-                  onClick={handleDeleteMail}
+                  onClick={() => setDeleteConfirmOpen(true)}
                   disabled={deleteBusy}
                 >
                   {deleteBusy ? t("inbox.detail.deleting") : t("inbox.detail.delete")}
@@ -250,6 +259,50 @@ export function InboxView({
           );
         })()}
       </section>
+
+      <Dialog
+        open={deleteConfirmOpen && Boolean(selectedMail)}
+        onOpenChange={(open) => {
+          if (!deleteBusy) setDeleteConfirmOpen(open);
+        }}
+      >
+        {selectedMail ? (
+          <DialogContent
+            className="confirm-dialog"
+            onEscapeKeyDown={(event) => {
+              if (deleteBusy) event.preventDefault();
+            }}
+            onPointerDownOutside={(event) => {
+              if (deleteBusy) event.preventDefault();
+            }}
+          >
+            <div className="confirm-copy">
+              <DialogTitle>{t("inbox.confirm.title")}</DialogTitle>
+              <DialogDescription>{t("inbox.confirm.delete")}</DialogDescription>
+            </div>
+            <div className="confirm-mail">
+              <strong>{selectedMail.subject || t("inbox.subject.empty")}</strong>
+              <span className="mono">{selectedMail.source || t("inbox.unknownSender")}</span>
+            </div>
+            <div className="confirm-actions">
+              <Button
+                variant="ghost"
+                onClick={() => setDeleteConfirmOpen(false)}
+                disabled={deleteBusy}
+              >
+                {t("inbox.confirm.cancel")}
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeleteMail}
+                disabled={deleteBusy}
+              >
+                {deleteBusy ? t("inbox.detail.deleting") : t("inbox.confirm.confirm")}
+              </Button>
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

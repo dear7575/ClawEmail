@@ -21,6 +21,7 @@ import {
   sendMail
 } from "./claw-mail";
 import {
+  deleteSettings,
   deleteMailById,
   deleteMailsByProviderIds,
   ensureSchema,
@@ -28,6 +29,7 @@ import {
   getMailboxById,
   getMailById,
   getMailByProviderId,
+  getSetting,
   listActiveMailboxes,
   listAttachments,
   listMailboxes,
@@ -36,6 +38,7 @@ import {
   markMailboxDeleted,
   markMailboxesMissingDeleted,
   saveMail,
+  setSetting,
   upsertMailbox,
   updateMailboxCommSettings
 } from "./db";
@@ -116,17 +119,33 @@ const replySchema = z.object({
   toAll: z.boolean().optional()
 });
 
+const clawLoginEmailSchema = z.string()
+  .transform((value) => {
+    const normalized = value.trim().replace(/＠/g, "@").toLowerCase();
+    return normalized.includes("@") ? normalized : `${normalized}@163.com`;
+  })
+  .pipe(z.string().regex(/^[^\s@]+@163\.com$/, "请输入完整 163 登录邮箱"));
+
 const sendCodeSchema = z.object({
-  email: z.string().email()
+  email: clawLoginEmailSchema
 });
 
 const verifyCodeSchema = z.object({
-  email: z.string().email(),
-  code: z.string().regex(/^\d{4,8}$/)
+  email: clawLoginEmailSchema,
+  code: z.string().trim().regex(/^\d+$/)
 });
+
+function pendingLoginCookieKey(email: string): string {
+  return `claw.pendingLoginCookie.${email}`;
+}
 
 const routes: Route[] = [
   route("GET", "/health", health),
+  route("GET", "/api/connections", connectionsList),
+  route("POST", "/api/connections/send-code", authSendCode),
+  route("POST", "/api/connections/verify-code", authVerifyCode),
+  route("POST", "/api/connections/:id/refresh", authRefresh),
+  route("POST", "/api/connections/:id/logout", authLogout),
   route("GET", "/api/auth/claw/status", authStatus),
   route("POST", "/api/auth/claw/send-code", authSendCode),
   route("POST", "/api/auth/claw/verify-code", authVerifyCode),
@@ -361,15 +380,35 @@ async function authStatus({ env }: { env: Env }) {
   return json(await getClawAuthStatus(env));
 }
 
-async function authSendCode({ request }: { request: Request }) {
+async function connectionsList({ env }: { env: Env }) {
+  const status = await getClawAuthStatus(env);
+  return json({
+    items: [{
+      ...status,
+      id: status.id ?? "legacy",
+      label: status.label ?? status.userEmail ?? status.workspaceName ?? "默认连接",
+      status: status.status ?? (status.connected ? "active" : "incomplete")
+    }]
+  });
+}
+
+async function authSendCode({ request, env }: { request: Request; env: Env }) {
   const body = sendCodeSchema.parse(await readBody(request));
-  await sendLoginCode(body.email);
+  const pendingCookie = await sendLoginCode(body.email);
+  if (pendingCookie) {
+    await setSetting(env.DB, pendingLoginCookieKey(body.email), pendingCookie);
+  }
   return json({ success: true });
 }
 
 async function authVerifyCode({ request, env }: { request: Request; env: Env }) {
   const body = verifyCodeSchema.parse(await readBody(request));
-  const cookie = await verifyLoginCode(body.email, body.code);
+  const cookie = await verifyLoginCode(
+    body.email,
+    body.code,
+    await getSetting(env.DB, pendingLoginCookieKey(body.email))
+  );
+  await deleteSettings(env.DB, [pendingLoginCookieKey(body.email)]);
   return json(await connectWithCookie(env, cookie));
 }
 

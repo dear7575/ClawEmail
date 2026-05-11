@@ -2,6 +2,7 @@ import { MailClient, MailSdkError, type MailDetail } from "@clawemail/node-sdk";
 import { requireClawApiKey } from "./runtime-config";
 
 export type SendMailInput = {
+  connectionId?: string;
   from: string;
   to: string[];
   subject?: string;
@@ -12,6 +13,7 @@ export type SendMailInput = {
 };
 
 export type ReplyMailInput = {
+  connectionId?: string;
   mailboxEmail: string;
   providerMailId: string;
   body?: string;
@@ -36,36 +38,44 @@ type InternalMailTransport = {
 
 const clients = new Map<string, MailClient>();
 
-export function getMailClient(email: string): MailClient {
+function clientKey(email: string, connectionId?: string | null): string {
+  return `${connectionId ?? "default"}:${email.trim().toLowerCase()}`;
+}
+
+export function getMailClient(email: string, connectionId?: string | null): MailClient {
   const normalized = email.trim().toLowerCase();
-  const existing = clients.get(normalized);
+  const key = clientKey(normalized, connectionId);
+  const existing = clients.get(key);
   if (existing) return existing;
 
   const client = new MailClient({
-    apiKey: requireClawApiKey(),
+    apiKey: requireClawApiKey(connectionId),
     user: normalized,
     logger: null
   });
-  clients.set(normalized, client);
+  clients.set(key, client);
   return client;
 }
 
-export function resetMailClients(): void {
-  for (const client of clients.values()) {
+export function resetMailClients(connectionId?: string | null): void {
+  const prefix = connectionId ? `${connectionId}:` : null;
+  for (const [key, client] of clients) {
+    if (prefix && !key.startsWith(prefix)) continue;
     try {
       client.ws.disconnect();
     } catch {
       // ignore disconnect errors
     }
+    clients.delete(key);
   }
-  clients.clear();
+  if (!prefix) clients.clear();
 }
 
 export async function sendMail(input: SendMailInput): Promise<{ status: "sent" }> {
   if (!input.to.length) {
     throw new Error("to must not be empty");
   }
-  const client = getMailClient(input.from);
+  const client = getMailClient(input.from, input.connectionId);
   return await client.mail.send({
     to: input.to,
     subject: input.subject,
@@ -77,7 +87,7 @@ export async function sendMail(input: SendMailInput): Promise<{ status: "sent" }
 }
 
 export async function replyMail(input: ReplyMailInput): Promise<{ status: "sent" }> {
-  const client = getMailClient(input.mailboxEmail);
+  const client = getMailClient(input.mailboxEmail, input.connectionId);
   return await client.mail.reply({
     id: input.providerMailId,
     body: input.body,
@@ -86,8 +96,8 @@ export async function replyMail(input: ReplyMailInput): Promise<{ status: "sent"
   });
 }
 
-export async function deleteRemoteMail(mailboxEmail: string, providerMailId: string): Promise<void> {
-  const client = getMailClient(mailboxEmail);
+export async function deleteRemoteMail(mailboxEmail: string, providerMailId: string, connectionId?: string | null): Promise<void> {
+  const client = getMailClient(mailboxEmail, connectionId);
   const transport = getInternalTransport(client);
 
   if (!transport?.moveMessages) {
@@ -97,8 +107,8 @@ export async function deleteRemoteMail(mailboxEmail: string, providerMailId: str
   await transport.moveMessages([providerMailId], "Trash");
 }
 
-export async function listRemoteInboxMessageIds(mailboxEmail: string, maxMessages = 500): Promise<string[]> {
-  const client = getMailClient(mailboxEmail);
+export async function listRemoteInboxMessageIds(mailboxEmail: string, maxMessages = 500, connectionId?: string | null): Promise<string[]> {
+  const client = getMailClient(mailboxEmail, connectionId);
   const transport = getInternalTransport(client);
   if (!transport?.listMessages) {
     throw new Error("Remote mailbox sync is not supported by the installed Claw SDK");
@@ -122,8 +132,8 @@ export async function listRemoteInboxMessageIds(mailboxEmail: string, maxMessage
   return ids;
 }
 
-export async function readRemoteMail(mailboxEmail: string, providerMailId: string): Promise<MailDetail> {
-  return await getMailClient(mailboxEmail).mail.read({
+export async function readRemoteMail(mailboxEmail: string, providerMailId: string, connectionId?: string | null): Promise<MailDetail> {
+  return await getMailClient(mailboxEmail, connectionId).mail.read({
     id: providerMailId,
     markRead: false
   });

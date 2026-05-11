@@ -88,6 +88,7 @@ export async function getClawAuthStatus(env: Env) {
   const rootPrefix = cookie ? await getStoredRootPrefix(env) : null;
   const domain = cookie ? await getStoredDomain(env) : null;
   return {
+    id: "legacy",
     connected: Boolean(apiKey && cookie && workspaceId && parentMailboxId && rootPrefix && domain),
     hasApiKey: Boolean(apiKey),
     hasDashboardCookie: Boolean(cookie),
@@ -98,7 +99,9 @@ export async function getClawAuthStatus(env: Env) {
     rootPrefix,
     domain,
     apiKeyPrefix: apiKey ? apiKey.slice(0, 10) : null,
-    apiKeySuffix: apiKey ? apiKey.slice(-4) : null
+    apiKeySuffix: apiKey ? apiKey.slice(-4) : null,
+    status: apiKey || cookie ? "active" : "incomplete",
+    label: await getSetting(env.DB, "claw.userEmail") ?? null
   };
 }
 

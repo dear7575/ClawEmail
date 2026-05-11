@@ -6,7 +6,6 @@ import {
   type ReactNode
 } from "react";
 
-export type Lang = "en" | "zh";
 export type Theme = "dark" | "light";
 
 type Dict = Record<string, string>;
@@ -14,12 +13,12 @@ type Dict = Record<string, string>;
 const EN: Dict = {
   // brand / login
   "brand.tagline": "operations terminal",
-  "login.headline.1": "throwaway",
-  "login.headline.2": "mail, on",
-  "login.headline.3": "command.",
+  "login.headline.1": "ClawMail",
+  "login.headline.2": "admin console",
+  "login.headline.3": "",
   "login.pitch":
-    "Mass-produce, monitor, dispatch and dissolve sub-mailboxes on claw.163.com. Bind via verification code — never paste credentials.",
-  "login.stamp.session": "session",
+    "Connect a Claw account, then manage connections, sub-mailboxes, inbox listeners and mail activity in one place.",
+  "login.stamp.session": "local session",
   "login.stamp.online": "online",
   "login.eyebrow": "access · gate",
   "login.title": "Authenticate.",
@@ -30,21 +29,20 @@ const EN: Dict = {
   "login.error.unauthorized": "incorrect admin password",
 
   // views
-  "view.mailboxes.eyebrow": "Operations · Mailboxes",
-  "view.mailboxes.title": "Throwaways",
+  "view.mailboxes.eyebrow": "Mailboxes",
+  "view.mailboxes.title": "Mailbox management",
   "view.mailboxes.subtitle":
-    "Forge, sync and dissolve sub-mailboxes on Claw.",
-  "view.inbox.eyebrow": "Operations · Inbox",
-  "view.inbox.title": "Live wire",
+    "Create, sync, and manage Claw sub-mailboxes.",
+  "view.inbox.eyebrow": "Inbox",
+  "view.inbox.title": "Inbox",
   "view.inbox.subtitle":
-    "Inbox streamed via WebSocket and persisted on the fly. Attachments stream on demand.",
-  "view.listeners.eyebrow": "Operations · Listeners",
-  "view.listeners.title": "Channels",
+    "View synced mail, attachments, and reply history.",
+  "view.listeners.eyebrow": "Claw connection",
+  "view.listeners.title": "Connection listeners",
   "view.listeners.subtitle":
-    "Each managed mailbox holds a long-lived listener. Their pulse shows here.",
+    "Monitor mailbox listener status for the current Claw session.",
 
   // rail / nav
-  "rail.brand.suffix": "terminal",
   "rail.workspace": "workspace",
   "rail.nav.inbox": "Inbox",
   "rail.nav.mailboxes": "Mailboxes",
@@ -66,8 +64,10 @@ const EN: Dict = {
   "conn.lis.running": "{n} / {total} live",
   "conn.lis.errors": "{n} errors",
   "conn.lis.empty": "no listeners running",
-  "conn.input.email": "claw login email",
+  "conn.input.email": "163 account",
   "conn.input.code": "verification code",
+  "conn.error.emailFormat": "Enter the 163 account name before @163.com.",
+  "conn.error.codeFormat": "Enter the numeric verification code.",
   "conn.action.sendCode": "send code",
   "conn.action.resendCode": "resend code",
   "conn.action.bind": "bind →",
@@ -144,7 +144,10 @@ const EN: Dict = {
   "inbox.reply.dispatch": "dispatch",
   "inbox.reply.sending": "sending…",
   "inbox.unknownSender": "unknown sender",
-  "inbox.confirm.delete": "Delete this mail from Claw and local storage?",
+  "inbox.confirm.title": "Delete mail",
+  "inbox.confirm.delete": "This mail will be removed from Claw and local storage. This cannot be undone.",
+  "inbox.confirm.cancel": "cancel",
+  "inbox.confirm.confirm": "delete mail",
 
   // mailboxes
   "mb.forge": "Forge",
@@ -215,19 +218,18 @@ const EN: Dict = {
   "pref.theme.light": "light",
   "pref.theme.toggleToLight": "switch to light theme",
   "pref.theme.toggleToDark": "switch to dark theme",
-  "pref.lang.toggle": "switch language",
 
   "size.kb": "kb"
 };
 
 const ZH: Dict = {
   "brand.tagline": "操作终端",
-  "login.headline.1": "一键召唤",
-  "login.headline.2": "随用即弃",
-  "login.headline.3": "的子邮箱。",
+  "login.headline.1": "ClawMail",
+  "login.headline.2": "管理后台",
+  "login.headline.3": "",
   "login.pitch":
-    "在 claw.163.com 上批量制造、监听、发信和销毁子邮箱。一切操作通过验证码连接，无需暴露凭据。",
-  "login.stamp.session": "会话",
+    "连接 Claw 账号后，统一管理连接、子邮箱、收件监听与发信记录。",
+  "login.stamp.session": "本地会话",
   "login.stamp.online": "在线",
   "login.eyebrow": "入口 · 闸门",
   "login.title": "身份核验。",
@@ -237,19 +239,18 @@ const ZH: Dict = {
   "login.btn.enter": "进入 →",
   "login.error.unauthorized": "管理密码错误",
 
-  "view.mailboxes.eyebrow": "操作 · 邮箱",
-  "view.mailboxes.title": "子邮箱",
-  "view.mailboxes.subtitle": "在 Claw 上创建、同步与销毁子邮箱。",
-  "view.inbox.eyebrow": "操作 · 收件箱",
-  "view.inbox.title": "实时通道",
+  "view.mailboxes.eyebrow": "邮箱管理",
+  "view.mailboxes.title": "邮箱管理",
+  "view.mailboxes.subtitle": "创建、同步和管理 Claw 子邮箱。",
+  "view.inbox.eyebrow": "收件箱",
+  "view.inbox.title": "收件箱",
   "view.inbox.subtitle":
-    "通过 WebSocket 实时落库的收件箱，附件按需流式下载。",
-  "view.listeners.eyebrow": "操作 · 监听器",
-  "view.listeners.title": "通道",
+    "查看同步邮件、附件和回复记录。",
+  "view.listeners.eyebrow": "Claw 连接",
+  "view.listeners.title": "连接监听",
   "view.listeners.subtitle":
-    "每个被管理的邮箱都对应一个长连接监听器，其状态在此实时呈现。",
+    "查看当前 Claw 会话的邮箱监听状态。",
 
-  "rail.brand.suffix": "终端",
   "rail.workspace": "工作区",
   "rail.nav.inbox": "收件箱",
   "rail.nav.mailboxes": "邮箱",
@@ -271,8 +272,10 @@ const ZH: Dict = {
   "conn.lis.running": "监听中 {n} / {total}",
   "conn.lis.errors": "异常 {n}",
   "conn.lis.empty": "暂无监听器",
-  "conn.input.email": "claw 登录邮箱",
+  "conn.input.email": "163 账号名",
   "conn.input.code": "验证码",
+  "conn.error.emailFormat": "请输入 @163.com 前面的 163 账号名。",
+  "conn.error.codeFormat": "请输入数字验证码。",
   "conn.action.sendCode": "发送验证码",
   "conn.action.resendCode": "重新发送",
   "conn.action.bind": "绑定 →",
@@ -344,7 +347,10 @@ const ZH: Dict = {
   "inbox.reply.dispatch": "发送",
   "inbox.reply.sending": "发送中…",
   "inbox.unknownSender": "未知发件人",
-  "inbox.confirm.delete": "确认从 Claw 远端和本地记录中删除这封邮件？",
+  "inbox.confirm.title": "删除邮件",
+  "inbox.confirm.delete": "删除后将从 Claw 远端和本地记录中移除，无法恢复。",
+  "inbox.confirm.cancel": "取消",
+  "inbox.confirm.confirm": "确认删除",
 
   "mb.forge": "创建",
   "mb.root.pending": "请先绑定 Claw",
@@ -409,17 +415,11 @@ const ZH: Dict = {
   "pref.theme.light": "亮色",
   "pref.theme.toggleToLight": "切换到亮色",
   "pref.theme.toggleToDark": "切换到暗色",
-  "pref.lang.toggle": "切换语言",
 
   "size.kb": "KB"
 };
 
-const DICT: Record<Lang, Dict> = { en: EN, zh: ZH };
-
 type PrefsCtx = {
-  lang: Lang;
-  setLang: (lang: Lang) => void;
-  toggleLang: () => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
@@ -427,14 +427,6 @@ type PrefsCtx = {
 };
 
 const Ctx = createContext<PrefsCtx | null>(null);
-
-function readLang(): Lang {
-  if (typeof localStorage === "undefined") return "en";
-  const saved = localStorage.getItem("lang");
-  if (saved === "zh" || saved === "en") return saved;
-  const browser = (navigator.language || "").toLowerCase();
-  return browser.startsWith("zh") ? "zh" : "en";
-}
 
 function readTheme(): Theme {
   if (typeof localStorage === "undefined") return "dark";
@@ -451,13 +443,12 @@ function format(template: string, vars?: Record<string, string | number>): strin
 }
 
 export function PrefsProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(readLang);
   const [theme, setThemeState] = useState<Theme>(readTheme);
 
   useEffect(() => {
-    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-    localStorage.setItem("lang", lang);
-  }, [lang]);
+    document.documentElement.lang = "zh-CN";
+    localStorage.removeItem("lang");
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -466,14 +457,11 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   function t(key: string, vars?: Record<string, string | number>): string {
-    const text = DICT[lang][key] ?? DICT.en[key] ?? key;
+    const text = ZH[key] ?? EN[key] ?? key;
     return format(text, vars);
   }
 
   const value: PrefsCtx = {
-    lang,
-    setLang: setLangState,
-    toggleLang: () => setLangState(lang === "en" ? "zh" : "en"),
     theme,
     setTheme: setThemeState,
     toggleTheme: () => setThemeState(theme === "dark" ? "light" : "dark"),
@@ -516,7 +504,7 @@ function Icon({ name }: { name: IconName }) {
 }
 
 export function PrefsBar({ variant = "rail" }: { variant?: "rail" | "login" }) {
-  const { theme, toggleTheme, lang, toggleLang, t } = usePrefs();
+  const { theme, toggleTheme, t } = usePrefs();
   const themeTitle =
     theme === "dark" ? t("pref.theme.toggleToLight") : t("pref.theme.toggleToDark");
   return (
@@ -530,17 +518,6 @@ export function PrefsBar({ variant = "rail" }: { variant?: "rail" | "login" }) {
       >
         <Icon name={theme === "dark" ? "moon" : "sun"} />
         <span className="pref-text">{theme === "dark" ? t("pref.theme.dark") : t("pref.theme.light")}</span>
-      </button>
-      <button
-        type="button"
-        className={`pref-btn lang-pill lang-${lang}`}
-        onClick={toggleLang}
-        title={t("pref.lang.toggle")}
-        aria-label={t("pref.lang.toggle")}
-      >
-        <span className={`lang-slot ${lang === "en" ? "on" : ""}`}>EN</span>
-        <span className="lang-slot-divider">/</span>
-        <span className={`lang-slot ${lang === "zh" ? "on" : ""}`}>中</span>
       </button>
     </div>
   );

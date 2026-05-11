@@ -15,9 +15,15 @@ import {
   upsertMailbox
 } from "../db";
 import { startMailboxListener, stopMailboxListener } from "../listener-manager";
-import { getParentMailboxId } from "../runtime-config";
+import { getParentMailboxId, requireConnection } from "../runtime-config";
+
+const listQuerySchema = z.object({
+  connectionId: z.string().min(1).optional(),
+  sync: z.enum(["true", "false"]).optional()
+});
 
 const createMailboxSchema = z.object({
+  connectionId: z.string().min(1).optional(),
   suffix: z.string().regex(/^[a-z0-9]{1,32}$/)
 });
 
@@ -49,7 +55,7 @@ const commSettingsSchema = z.object({
   }
 });
 
-function upsertRemoteMailbox(item: {
+function upsertRemoteMailbox(connectionId: string, item: {
   id: string;
   email: string;
   prefix: string;
@@ -64,6 +70,8 @@ function upsertRemoteMailbox(item: {
 }) {
   return upsertMailbox({
     id: item.id,
+    connectionId,
+    providerMailboxId: item.id,
     email: item.email,
     prefix: item.prefix,
     displayName: item.displayName,
@@ -79,25 +87,30 @@ function upsertRemoteMailbox(item: {
 
 export async function mailboxRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/mailboxes", async (request) => {
-    const query = request.query as { sync?: string };
+    const query = listQuerySchema.parse(request.query);
+    const connection = query.connectionId ? requireConnection(query.connectionId) : undefined;
     if (query.sync === "true") {
-      const remote = await listDashboardMailboxes();
+      const syncConnection = requireConnection(query.connectionId);
+      const remote = await listDashboardMailboxes({
+        connectionId: syncConnection.id
+      });
       for (const item of remote) {
-        const row = upsertRemoteMailbox(item);
+        const row = upsertRemoteMailbox(syncConnection.id, item);
         startMailboxListener(row);
       }
-      for (const mailbox of markMailboxesMissingDeleted(remote.map((item) => item.email))) {
-        stopMailboxListener(mailbox.email);
+      for (const mailbox of markMailboxesMissingDeleted(remote.map((item) => item.email), syncConnection.id)) {
+        stopMailboxListener(mailbox.email, syncConnection.id);
       }
     }
-    return { items: listMailboxes(false) };
+    return { items: listMailboxes({ connectionId: connection?.id }) };
   });
 
   app.post("/api/mailboxes", async (request, reply) => {
     const body = createMailboxSchema.parse(request.body);
-    const mailbox = await createMailbox(body.suffix);
-    await updateMailboxCommunicationSettings(mailbox.id, DEFAULT_COMM_SETTINGS);
-    const row = upsertRemoteMailbox({
+    const connection = requireConnection(body.connectionId);
+    const mailbox = await createMailbox(body.suffix, connection.id);
+    await updateMailboxCommunicationSettings(mailbox.id, DEFAULT_COMM_SETTINGS, connection.id);
+    const row = upsertRemoteMailbox(connection.id, {
       ...mailbox,
       commLevel: DEFAULT_COMM_SETTINGS.commLevel,
       extReceiveType: DEFAULT_COMM_SETTINGS.extReceiveType,
@@ -114,6 +127,7 @@ export async function mailboxRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: "mailbox not found" });
     }
 
+    const connectionId = mailbox.connection_id ?? undefined;
     const body = commSettingsSchema.parse(request.body);
     const dashboardPayload = body.commLevel === 2
       ? {
@@ -123,7 +137,11 @@ export async function mailboxRoutes(app: FastifyInstance): Promise<void> {
         }
       : { commLevel: body.commLevel };
 
-    await updateMailboxCommunicationSettings(id, dashboardPayload);
+    await updateMailboxCommunicationSettings(
+      mailbox.provider_mailbox_id ?? id,
+      dashboardPayload,
+      connectionId
+    );
     const updated = updateMailboxCommSettings(id, {
       commLevel: body.commLevel,
       extReceiveType: body.commLevel === 2 ? body.extReceiveType : null,
@@ -138,12 +156,13 @@ export async function mailboxRoutes(app: FastifyInstance): Promise<void> {
     if (!mailbox) {
       return { success: true };
     }
-    if (id === getParentMailboxId()) {
+    const connectionId = mailbox.connection_id ?? undefined;
+    if ((mailbox.provider_mailbox_id ?? id) === getParentMailboxId(connectionId)) {
       return reply.code(400).send({ error: "primary mailbox cannot be deleted here" });
     }
-    await deleteMailbox(id);
+    await deleteMailbox(mailbox.provider_mailbox_id ?? id, connectionId);
     markMailboxDeleted(id);
-    stopMailboxListener(mailbox.email);
+    stopMailboxListener(mailbox.email, connectionId);
     return { success: true };
   });
 }

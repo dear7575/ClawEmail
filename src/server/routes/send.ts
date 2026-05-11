@@ -27,7 +27,10 @@ export async function sendRoutes(app: FastifyInstance): Promise<void> {
     if (!mailbox) {
       return reply.code(400).send({ error: "from mailbox is not managed by this app" });
     }
-    const result = await sendMail(body);
+    const result = await sendMail({
+      ...body,
+      connectionId: mailbox.connection_id ?? undefined
+    });
     return result;
   });
 
@@ -38,6 +41,7 @@ export async function sendRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: "mail not found" });
     }
     const result = await replyMail({
+      connectionId: mail.connection_id ?? undefined,
       mailboxEmail: mail.mailbox_email,
       providerMailId: mail.provider_mail_id,
       body: body.body,

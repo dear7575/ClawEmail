@@ -5,6 +5,8 @@ import { hasClawMailConfig } from "./runtime-config";
 import { sseHub } from "./sse";
 
 type ListenerState = {
+  key: string;
+  connectionId: string;
   email: string;
   stopped: boolean;
   connected: boolean;
@@ -24,10 +26,11 @@ function attachmentList(mail: MailDetail) {
   }));
 }
 
-async function persistIncomingMail(mailboxEmail: string, providerMailId: string): Promise<number> {
-  const client = getMailClient(mailboxEmail);
+async function persistIncomingMail(connectionId: string, mailboxEmail: string, providerMailId: string): Promise<number> {
+  const client = getMailClient(mailboxEmail, connectionId);
   const mail = await client.mail.read({ id: providerMailId, markRead: true });
   const row = saveMail({
+    connectionId,
     providerMailId,
     mailboxEmail,
     source: mail.from?.[0] ?? null,
@@ -48,11 +51,12 @@ async function connect(state: ListenerState): Promise<void> {
   if (state.stopped) return;
 
   try {
-    const client = getMailClient(state.email);
+    const client = getMailClient(state.email, state.connectionId);
     client.ws.onMessage(async ({ mailId }) => {
       try {
-        const localMailId = await persistIncomingMail(state.email, mailId);
+        const localMailId = await persistIncomingMail(state.connectionId, state.email, mailId);
         sseHub.broadcast("mail", {
+          connectionId: state.connectionId,
           mailboxEmail: state.email,
           id: localMailId,
           providerMailId: mailId
@@ -90,35 +94,44 @@ function scheduleReconnect(state: ListenerState): void {
   }, delay);
 }
 
-export function startMailboxListener(mailbox: Pick<MailboxRow, "email" | "status">): void {
-  if (!hasClawMailConfig()) return;
+function listenerKey(connectionId: string, email: string): string {
+  return `${connectionId}:${email.trim().toLowerCase()}`;
+}
+
+export function startMailboxListener(mailbox: Pick<MailboxRow, "connection_id" | "email" | "status">): void {
+  const connectionId = mailbox.connection_id ?? "legacy";
+  if (!hasClawMailConfig(connectionId)) return;
   const email = mailbox.email.trim().toLowerCase();
   if (mailbox.status !== "active") return;
-  const existing = listeners.get(email);
+  const key = listenerKey(connectionId, email);
+  const existing = listeners.get(key);
   if (existing && !existing.stopped) return;
 
   const state: ListenerState = {
+    key,
+    connectionId,
     email,
     stopped: false,
     connected: false,
     retry: 0
   };
-  listeners.set(email, state);
+  listeners.set(key, state);
   void connect(state);
 }
 
-export function stopMailboxListener(email: string): void {
+export function stopMailboxListener(email: string, connectionId = "legacy"): void {
   const normalized = email.trim().toLowerCase();
-  const state = listeners.get(normalized);
+  const key = listenerKey(connectionId, normalized);
+  const state = listeners.get(key);
   if (!state) return;
   state.stopped = true;
   if (state.timer) clearTimeout(state.timer);
   try {
-    getMailClient(normalized).ws.disconnect();
+    getMailClient(normalized, connectionId).ws.disconnect();
   } catch {
     // ignore disconnect errors
   }
-  listeners.delete(normalized);
+  listeners.delete(key);
 }
 
 export function startAllMailboxListeners(): void {
@@ -127,15 +140,29 @@ export function startAllMailboxListeners(): void {
   }
 }
 
+export function startConnectionMailboxListeners(connectionId: string): void {
+  for (const mailbox of listActiveMailboxes(connectionId)) {
+    startMailboxListener(mailbox);
+  }
+}
+
 export function stopAllMailboxListeners(): void {
   for (const listener of listenerSnapshot()) {
-    stopMailboxListener(listener.email);
+    stopMailboxListener(listener.email, listener.connectionId);
+  }
+}
+
+export function stopConnectionMailboxListeners(connectionId: string): void {
+  for (const listener of listenerSnapshot().filter((item) => item.connectionId === connectionId)) {
+    stopMailboxListener(listener.email, connectionId);
   }
 }
 
 export function listenerSnapshot() {
   return Array.from(listeners.values()).map((listener) => ({
+    connectionId: listener.connectionId,
     email: listener.email,
+    status: listener.connected ? "running" : "error",
     connected: listener.connected,
     retry: listener.retry
   }));
