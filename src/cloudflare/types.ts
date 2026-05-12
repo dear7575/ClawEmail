@@ -137,9 +137,16 @@ export type DuckAddressRow = {
   local_part: string;
   forwarding_mailbox_email: string | null;
   note: string | null;
+  openai_password: string | null;
+  openai_auth_json: string | null;
   status: string;
   raw_json: string;
   created_at: string;
   updated_at: string;
+};
+
+export type DuckAddressPublic = Omit<DuckAddressRow, "openai_password" | "openai_auth_json"> & {
+  has_openai_password: boolean;
+  has_openai_auth_json: boolean;
 };
 

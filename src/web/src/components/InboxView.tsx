@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { deleteMail, replyMail, type MailDetail, type MailSummary } from "../api";
+import { clearMails, deleteMail, replyMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
@@ -12,6 +12,7 @@ type Props = {
   selectedMail: MailDetail | null;
   onSelectMail: (id: number) => void;
   onRefresh: () => void;
+  onCleared: (deleted: number, failed: number, msg: string) => void;
   onDeleted: (id: number, msg: string) => void;
   onReplied: (msg: string) => void;
   onError: (msg: string) => void;
@@ -49,6 +50,7 @@ export function InboxView({
   selectedMail,
   onSelectMail,
   onRefresh,
+  onCleared,
   onDeleted,
   onReplied,
   onError,
@@ -67,6 +69,8 @@ export function InboxView({
   const [replyBusy, setReplyBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
   useEffect(() => {
     setDeleteConfirmOpen(false);
@@ -108,6 +112,27 @@ export function InboxView({
     }
   }
 
+  async function handleClearMails() {
+    setClearBusy(true);
+    try {
+      const result = await clearMails({
+        mailbox: selectedMailbox || undefined
+      });
+      setClearConfirmOpen(false);
+      onCleared(
+        result.deleted,
+        result.failed,
+        result.failed > 0
+          ? `已删除 ${result.deleted} 封邮件，${result.failed} 封删除失败`
+          : `已清空 ${result.deleted} 封邮件`
+      );
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClearBusy(false);
+    }
+  }
+
   return (
     <div
       className="inbox"
@@ -118,6 +143,13 @@ export function InboxView({
           <span className="label">{selectedMailbox || t("inbox.list.noMailbox")}</span>
           <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span className="tag muted">{plural(t, "inbox.list.count", mails.length)}</span>
+            <button
+              className="danger"
+              onClick={() => setClearConfirmOpen(true)}
+              disabled={mails.length === 0 || clearBusy}
+            >
+              {clearBusy ? "清空中" : "清空邮件"}
+            </button>
             <button onClick={onRefresh}>{t("toolbar.refresh")}</button>
           </span>
         </div>
@@ -308,6 +340,50 @@ export function InboxView({
             </div>
           </DialogContent>
         ) : null}
+      </Dialog>
+
+      <Dialog
+        open={clearConfirmOpen}
+        onOpenChange={(open) => {
+          if (!clearBusy) setClearConfirmOpen(open);
+        }}
+      >
+        <DialogContent
+          className="confirm-dialog"
+          onEscapeKeyDown={(event) => {
+            if (clearBusy) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (clearBusy) event.preventDefault();
+          }}
+        >
+          <div className="confirm-copy">
+            <DialogTitle>清空邮件</DialogTitle>
+            <DialogDescription>
+              将删除当前范围内的邮件，并同步删除 Claw 远端邮件。
+            </DialogDescription>
+          </div>
+          <div className="confirm-mail">
+            <strong>{selectedMailbox || "全部邮箱"}</strong>
+            <span className="mono">{mails.length} 封邮件</span>
+          </div>
+          <div className="confirm-actions">
+            <Button
+              variant="ghost"
+              onClick={() => setClearConfirmOpen(false)}
+              disabled={clearBusy}
+            >
+              取消
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleClearMails}
+              disabled={clearBusy || mails.length === 0}
+            >
+              {clearBusy ? "清空中..." : "确认清空"}
+            </Button>
+          </div>
+        </DialogContent>
       </Dialog>
     </div>
   );

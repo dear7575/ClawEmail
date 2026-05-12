@@ -42,7 +42,7 @@ src/
 | 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `routes/events.ts`、`ListenersDrawer.tsx` |
 | Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `routes/duck.ts`、`duck-email.ts`、`App.tsx` |
 | 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `routes/telegram.ts`、`telegram.ts`、`App.tsx` |
-| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；获取 OpenAI 分组并按所选分组推送 | `routes/sub2.ts`、`sub2.ts`、`App.tsx` |
+| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；按系统设置里的默认 OpenAI 分组推送 | `routes/sub2.ts`、`sub2.ts`、`App.tsx` |
 | 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `i18n.tsx`、`hooks.ts` |
 
 ## 2. Claw 验证码登录链
@@ -148,11 +148,11 @@ GET    /api/telegram/settings            # { enabled, chatId, hasBotToken, botTo
 PUT    /api/telegram/settings            # { enabled?, botToken?, chatId? }
 POST   /api/telegram/send                # { text }，手动发送文本到 Telegram
 
-GET    /api/sub2/settings                 # { apiUrl, hasApiKey, apiKeyPreview }
-PUT    /api/sub2/settings                 # { apiUrl?, apiKey? }
+GET    /api/sub2/settings                 # { apiUrl, hasApiKey, apiKeyPreview, defaultGroupId }
+PUT    /api/sub2/settings                 # { apiUrl?, apiKey?, defaultGroupId? }
 GET    /api/sub2/groups                   # 拉取 OpenAI active 分组供页面选择
 POST   /api/sub2/convert                  # { input }，仅转换预览，不访问 Sub2API
-POST   /api/sub2/push                     # { input, groupId }，转换后按所选分组推送
+POST   /api/sub2/push                     # { input, groupId? }，未传 groupId 时使用默认推送分组
 ```
 
 请求样例：
@@ -224,8 +224,8 @@ Authorization: Bearer <DDG_TOKEN>
 
 1. 从“系统设置”读取 Sub2API 地址和 APIKey。
 2. 调用 `GET /api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active` 获取 OpenAI 可用分组。
-3. 页面选择目标分组。
-4. 调用 `POST /api/v1/admin/accounts/data`，账号写入 `group_ids: [所选分组ID]`。
+3. 在“系统设置”里保存默认推送分组。
+4. 调用 `POST /api/v1/admin/accounts/data`，账号写入 `group_ids: [默认分组ID]`。
 
 Sub2API 地址可以填写根地址，例如 `https://sub2.example.com`，也可以填写完整 `/api/v1/admin/accounts/data` 导入地址。Admin API Key 会按 Sub2API 约定放到 `x-api-key` 请求头；如果配置值以 `Bearer ` 开头，则按 JWT 令牌放到 `Authorization` 请求头。
 

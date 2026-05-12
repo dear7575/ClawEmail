@@ -28,6 +28,7 @@ import {
   deleteMailsByProviderIds,
   deleteDuckAccount,
   ensureSchema,
+  getDuckAddressById,
   getDuckAccountById,
   getMailboxByEmail,
   getMailboxById,
@@ -52,6 +53,7 @@ import {
   upsertMailbox,
   updateDuckAccountToken,
   updateDuckAddress,
+  updateDuckAddressOpenAiCredentials,
   updateMailboxCommSettings
 } from "./db";
 import {
@@ -61,7 +63,7 @@ import {
   requireDashboardCookie,
   saveClawAuthSettings
 } from "./runtime-config";
-import type { Env, MailboxRow } from "./types";
+import type { DuckAddressPublic, DuckAddressRow, Env, MailboxRow } from "./types";
 
 type Params = Record<string, string>;
 type Handler = (ctx: {
@@ -77,6 +79,19 @@ type Route = {
   keys: string[];
   handler: Handler;
 };
+
+function toPublicDuckAddress(row: DuckAddressRow): DuckAddressPublic {
+  const {
+    openai_password: openAiPassword,
+    openai_auth_json: openAiAuthJson,
+    ...rest
+  } = row;
+  return {
+    ...rest,
+    has_openai_password: Boolean(openAiPassword),
+    has_openai_auth_json: Boolean(openAiAuthJson)
+  };
+}
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -141,7 +156,8 @@ const telegramMessageSchema = z.object({
 
 const sub2SettingsSchema = z.object({
   apiUrl: z.string().trim().max(500).optional(),
-  apiKey: z.string().trim().max(500).optional()
+  apiKey: z.string().trim().max(500).optional(),
+  defaultGroupId: z.coerce.number().int().positive().nullable().optional()
 });
 
 const sub2AccountPayloadSchema = z.object({
@@ -200,6 +216,11 @@ const duckAddressUpdateSchema = z.object({
   note: z.string().trim().max(300).optional().nullable()
 });
 
+const openAiCredentialsSchema = z.object({
+  password: z.string().optional().nullable(),
+  authJson: z.unknown().optional()
+});
+
 const verifyCodeSchema = z.object({
   email: clawLoginEmailSchema,
   code: z.string().trim().regex(/^\d+$/)
@@ -207,6 +228,17 @@ const verifyCodeSchema = z.object({
 
 function pendingLoginCookieKey(email: string): string {
   return `claw.pendingLoginCookie.${email}`;
+}
+
+function normalizeOptionalJson(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  }
+  return JSON.stringify(value, null, 2);
 }
 
 const routes: Route[] = [
@@ -229,10 +261,14 @@ const routes: Route[] = [
   route("GET", "/api/sub2/groups", sub2GroupsList),
   route("POST", "/api/sub2/convert", sub2Convert),
   route("POST", "/api/sub2/push", sub2Push),
+  route("POST", "/api/openai/duck-push-sub2", openAiDuckPushUnsupported),
   route("POST", "/api/duck/accounts", duckAccountsCreate),
   route("PATCH", "/api/duck/accounts/:id", duckAccountsUpdate),
   route("DELETE", "/api/duck/accounts/:id", duckAccountsDelete),
   route("GET", "/api/duck/addresses", duckAddressesList),
+  route("GET", "/api/duck/addresses/:id/openai-password", duckAddressOpenAiPasswordGet),
+  route("GET", "/api/duck/addresses/:id/openai-auth-json", duckAddressOpenAiAuthJsonGet),
+  route("PATCH", "/api/duck/addresses/:id/openai-credentials", duckAddressOpenAiCredentialsUpdate),
   route("POST", "/api/duck/accounts/:id/addresses", duckAddressesCreate),
   route("PATCH", "/api/duck/addresses/:id", duckAddressesUpdate),
   route("DELETE", "/api/duck/addresses/:id", duckAddressesDelete),
@@ -516,14 +552,23 @@ function publicTelegramSettings(settings: { enabled: boolean; botToken: string; 
 async function getSub2Settings(env: Env) {
   const apiUrl = (await getSetting(env.DB, "sub2.apiUrl") ?? env.SUB2_API_URL ?? "").trim();
   const apiKey = (await getSetting(env.DB, "sub2.apiKey") ?? env.SUB2_API_KEY ?? "").trim();
-  return { apiUrl, apiKey };
+  const defaultGroupId = parseOptionalGroupId(await getSetting(env.DB, "sub2.defaultGroupId"));
+  return { apiUrl, apiKey, defaultGroupId };
 }
 
-function publicSub2Settings(settings: { apiUrl: string; apiKey: string }) {
+function parseOptionalGroupId(value?: string | null): number | null {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function publicSub2Settings(settings: { apiUrl: string; apiKey: string; defaultGroupId: number | null }) {
   return {
     apiUrl: settings.apiUrl,
     hasApiKey: Boolean(settings.apiKey),
-    apiKeyPreview: maskApiKey(settings.apiKey)
+    apiKeyPreview: maskApiKey(settings.apiKey),
+    defaultGroupId: settings.defaultGroupId
   };
 }
 
@@ -841,10 +886,12 @@ async function sub2SettingsUpdate({ request, env }: { request: Request; env: Env
   const current = await getSub2Settings(env);
   const next = {
     apiUrl: body.apiUrl === undefined ? current.apiUrl : body.apiUrl.trim(),
-    apiKey: body.apiKey === undefined ? current.apiKey : body.apiKey.trim()
+    apiKey: body.apiKey === undefined ? current.apiKey : body.apiKey.trim(),
+    defaultGroupId: body.defaultGroupId === undefined ? current.defaultGroupId : body.defaultGroupId
   };
   await setSetting(env.DB, "sub2.apiUrl", next.apiUrl);
   await setSetting(env.DB, "sub2.apiKey", next.apiKey);
+  await setSetting(env.DB, "sub2.defaultGroupId", next.defaultGroupId ? String(next.defaultGroupId) : "");
   return json(publicSub2Settings(next));
 }
 
@@ -863,8 +910,9 @@ async function sub2Push({ request, env }: { request: Request; env: Env }) {
   const body = sub2AccountPayloadSchema.parse(await readBody(request));
   const settings = await getSub2Settings(env);
   if (!settings.apiKey) return error("请先在系统设置里配置 Sub2API APIKey", 400);
-  if (!body.groupId) return error("请选择要推送到的 Sub2 分组", 400);
-  const data = applySub2Group(convertChatGptSessionToSub2(body.input, env), body.groupId);
+  const groupId = body.groupId ?? settings.defaultGroupId;
+  if (!groupId) return error("请先在系统设置里选择 Sub2 默认推送分组", 400);
+  const data = applySub2Group(convertChatGptSessionToSub2(body.input, env), groupId);
   const response = await fetch(normalizeSub2ImportUrl(settings.apiUrl), {
     method: "POST",
     headers: {
@@ -884,6 +932,10 @@ async function sub2Push({ request, env }: { request: Request; env: Env }) {
     return error(`Sub2API 推送失败：${sub2ErrorMessage(result, "接口返回失败")}`, 502);
   }
   return json({ success: true, data, response: result });
+}
+
+function openAiDuckPushUnsupported() {
+  return error("Cloudflare 版不支持 OpenAI 接口登录推送，请使用 Node 或 Docker 版", 400);
 }
 
 async function duckAccountsCreate({ request, env }: { request: Request; env: Env }) {
@@ -925,8 +977,56 @@ async function duckAddressesList({ env, url }: { env: Env; url: URL }) {
   return json({
     items: await listDuckAddresses(env.DB, {
       accountId: query.accountId
-    })
+    }).then((items) => items.map(toPublicDuckAddress))
   });
+}
+
+async function duckAddressOpenAiPasswordGet({ env, params }: { env: Env; params: Params }) {
+  const row = await getDuckAddressById(env.DB, Number(params.id));
+  if (!row || row.status !== "active") {
+    return error("Duck address not found", 404);
+  }
+  if (!row.openai_password) {
+    return error("该 Duck 邮箱没有保存 OpenAI 密码", 404);
+  }
+  return json({ password: row.openai_password });
+}
+
+async function duckAddressOpenAiAuthJsonGet({ env, params }: { env: Env; params: Params }) {
+  const row = await getDuckAddressById(env.DB, Number(params.id));
+  if (!row || row.status !== "active") {
+    return error("Duck address not found", 404);
+  }
+  if (!row.openai_auth_json) {
+    return error("该 Duck 邮箱没有保存 OpenAI 授权信息", 404);
+  }
+  return json({ authJson: row.openai_auth_json });
+}
+
+async function duckAddressOpenAiCredentialsUpdate({
+  request,
+  env,
+  params
+}: {
+  request: Request;
+  env: Env;
+  params: Params;
+}) {
+  const body = openAiCredentialsSchema.parse(await readBody(request));
+  let authJson: string | null | undefined;
+  try {
+    authJson = normalizeOptionalJson(body.authJson);
+  } catch {
+    return error("OpenAI 授权信息必须是合法 JSON", 400);
+  }
+  const row = await updateDuckAddressOpenAiCredentials(env.DB, Number(params.id), {
+    password: body.password === undefined ? undefined : body.password || null,
+    authJson
+  });
+  if (!row) {
+    return error("Duck address not found", 404);
+  }
+  return json(toPublicDuckAddress(row));
 }
 
 async function duckAddressesCreate({
@@ -954,7 +1054,7 @@ async function duckAddressesCreate({
       rawJson: JSON.stringify(generated.raw)
     });
     await markDuckAccountUsed(env.DB, account.id);
-    return json(row, { status: 201 });
+    return json(toPublicDuckAddress(row), { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await markDuckAccountError(env.DB, account.id, message);
@@ -981,7 +1081,7 @@ async function duckAddressesUpdate({
   if (!row) {
     return error("Duck address not found", 404);
   }
-  return json(row);
+  return json(toPublicDuckAddress(row));
 }
 
 async function duckAddressesDelete({ env, params }: { env: Env; params: Params }) {

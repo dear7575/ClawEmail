@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS duck_addresses (
   local_part TEXT NOT NULL,
   forwarding_mailbox_email TEXT,
   note TEXT,
+  openai_password TEXT,
+  openai_auth_json TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   raw_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -145,6 +147,8 @@ ensureColumn("mailboxes", "ext_send_type", "INTEGER");
 ensureColumn("mailboxes", "connection_id", "TEXT");
 ensureColumn("mailboxes", "provider_mailbox_id", "TEXT");
 ensureColumn("mails", "connection_id", "TEXT");
+ensureColumn("duck_addresses", "openai_password", "TEXT");
+ensureColumn("duck_addresses", "openai_auth_json", "TEXT");
 ensureMailReadColumn();
 
 db.exec(`
@@ -238,10 +242,17 @@ export type DuckAddressRow = {
   local_part: string;
   forwarding_mailbox_email: string | null;
   note: string | null;
+  openai_password: string | null;
+  openai_auth_json: string | null;
   status: string;
   raw_json: string;
   created_at: string;
   updated_at: string;
+};
+
+export type DuckAddressPublic = Omit<DuckAddressRow, "openai_password" | "openai_auth_json"> & {
+  has_openai_password: boolean;
+  has_openai_auth_json: boolean;
 };
 
 export type DuckAccountPublic = Omit<DuckAccountRow, "token"> & {
@@ -596,6 +607,27 @@ export function listMails(input: {
   return { items, count: count.count };
 }
 
+export function listMailsForDeletion(input: {
+  connectionId?: string;
+  mailboxEmail?: string;
+}): MailRow[] {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (input.connectionId) {
+    where.push("connection_id = ?");
+    params.push(input.connectionId);
+  }
+  if (input.mailboxEmail) {
+    where.push("mailbox_email = ?");
+    params.push(input.mailboxEmail);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return db.prepare(`
+    SELECT * FROM mails ${whereSql}
+    ORDER BY created_at DESC, id DESC
+  `).all(...params) as MailRow[];
+}
+
 export function listMailProviderIds(mailboxEmail: string, connectionId?: string): string[] {
   const rows = connectionId
     ? db.prepare("SELECT provider_mail_id FROM mails WHERE connection_id = ? AND mailbox_email = ?")
@@ -761,6 +793,68 @@ export function listDuckAddresses(input: {
   `).all(...params) as DuckAddressRow[];
 }
 
+export function toPublicDuckAddress(row: DuckAddressRow): DuckAddressPublic {
+  const {
+    openai_password: openAiPassword,
+    openai_auth_json: openAiAuthJson,
+    ...rest
+  } = row;
+  return {
+    ...rest,
+    has_openai_password: Boolean(openAiPassword),
+    has_openai_auth_json: Boolean(openAiAuthJson)
+  };
+}
+
+export function getDuckAddressById(id: number): DuckAddressRow | undefined {
+  return db.prepare("SELECT * FROM duck_addresses WHERE id = ?").get(id) as DuckAddressRow | undefined;
+}
+
+export function getDuckAddressByAddress(address: string): DuckAddressRow | undefined {
+  return db.prepare("SELECT * FROM duck_addresses WHERE address = ?").get(address.trim().toLowerCase()) as DuckAddressRow | undefined;
+}
+
+export function setDuckAddressOpenAiPassword(id: number, password: string | null): DuckAddressRow | undefined {
+  db.prepare(`
+    UPDATE duck_addresses
+    SET openai_password = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(password, id);
+  return getDuckAddressById(id);
+}
+
+export function setDuckAddressOpenAiAuthJson(id: number, authJson: string | null): DuckAddressRow | undefined {
+  db.prepare(`
+    UPDATE duck_addresses
+    SET openai_auth_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(authJson, id);
+  return getDuckAddressById(id);
+}
+
+export function updateDuckAddressOpenAiCredentials(
+  id: number,
+  input: {
+    password?: string | null;
+    authJson?: string | null;
+  }
+): DuckAddressRow | undefined {
+  const existing = getDuckAddressById(id);
+  if (!existing) return undefined;
+  db.prepare(`
+    UPDATE duck_addresses
+    SET openai_password = @password,
+        openai_auth_json = @authJson,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id,
+    password: input.password === undefined ? existing.openai_password : input.password,
+    authJson: input.authJson === undefined ? existing.openai_auth_json : input.authJson
+  });
+  return getDuckAddressById(id);
+}
+
 export function saveDuckAddress(input: {
   accountId: string;
   address: string;
@@ -771,9 +865,9 @@ export function saveDuckAddress(input: {
 }): DuckAddressRow {
   db.prepare(`
     INSERT INTO duck_addresses
-      (account_id, address, local_part, forwarding_mailbox_email, note, status, raw_json)
+      (account_id, address, local_part, forwarding_mailbox_email, note, openai_password, openai_auth_json, status, raw_json)
     VALUES
-      (@accountId, @address, @localPart, @forwardingMailboxEmail, @note, 'active', @rawJson)
+      (@accountId, @address, @localPart, @forwardingMailboxEmail, @note, NULL, NULL, 'active', @rawJson)
     ON CONFLICT(address) DO UPDATE SET
       account_id = excluded.account_id,
       local_part = excluded.local_part,

@@ -13,6 +13,7 @@ import { clawAuthRoutes } from "./routes/claw-auth";
 import { duckRoutes } from "./routes/duck";
 import { telegramRoutes } from "./routes/telegram";
 import { sub2Routes } from "./routes/sub2";
+import { openAiAuthRoutes } from "./routes/openai-auth";
 import { startAllMailboxListeners } from "./listener-manager";
 import { hasClawMailConfig } from "./runtime-config";
 
@@ -47,7 +48,7 @@ app.setErrorHandler((error, _request, reply) => {
 });
 
 app.get("/health", async () => {
-  return { ok: true };
+  return { ok: true, runtime: "node" };
 });
 
 await mailboxRoutes(app);
@@ -58,6 +59,7 @@ await clawAuthRoutes(app);
 await duckRoutes(app);
 await telegramRoutes(app);
 await sub2Routes(app);
+await openAiAuthRoutes(app);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webRoot = join(__dirname, "../web");

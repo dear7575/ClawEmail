@@ -122,6 +122,8 @@ const SCHEMA_STATEMENTS = [
       local_part TEXT NOT NULL,
       forwarding_mailbox_email TEXT,
       note TEXT,
+      openai_password TEXT,
+      openai_auth_json TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       raw_json TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -141,6 +143,8 @@ export async function ensureSchema(db: D1Database): Promise<void> {
   await ensureColumn(db, "mailboxes", "connection_id", "TEXT");
   await ensureColumn(db, "mailboxes", "provider_mailbox_id", "TEXT");
   await ensureColumn(db, "mails", "connection_id", "TEXT");
+  await ensureColumn(db, "duck_addresses", "openai_password", "TEXT");
+  await ensureColumn(db, "duck_addresses", "openai_auth_json", "TEXT");
   const mailReadColumnAdded = await ensureColumn(db, "mails", "read_at", "TEXT");
   if (mailReadColumnAdded) {
     await db.prepare("UPDATE mails SET read_at = CURRENT_TIMESTAMP WHERE read_at IS NULL").run();
@@ -600,9 +604,9 @@ export async function saveDuckAddress(
 ): Promise<DuckAddressRow> {
   await db.prepare(`
     INSERT INTO duck_addresses
-      (account_id, address, local_part, forwarding_mailbox_email, note, status, raw_json)
+      (account_id, address, local_part, forwarding_mailbox_email, note, openai_password, openai_auth_json, status, raw_json)
     VALUES
-      (?, ?, ?, ?, ?, 'active', ?)
+      (?, ?, ?, ?, ?, NULL, NULL, 'active', ?)
     ON CONFLICT(address) DO UPDATE SET
       account_id = excluded.account_id,
       local_part = excluded.local_part,
@@ -646,6 +650,32 @@ export async function updateDuckAddress(
     id
   ).run();
   return first<DuckAddressRow>(db, "SELECT * FROM duck_addresses WHERE id = ?", id);
+}
+
+export async function getDuckAddressById(db: D1Database, id: number): Promise<DuckAddressRow | undefined> {
+  return first<DuckAddressRow>(db, "SELECT * FROM duck_addresses WHERE id = ?", id);
+}
+
+export async function updateDuckAddressOpenAiCredentials(
+  db: D1Database,
+  id: number,
+  input: {
+    password?: string | null;
+    authJson?: string | null;
+  }
+): Promise<DuckAddressRow | undefined> {
+  const existing = await getDuckAddressById(db, id);
+  if (!existing) return undefined;
+  await db.prepare(`
+    UPDATE duck_addresses
+    SET openai_password = ?, openai_auth_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(
+    input.password === undefined ? existing.openai_password : input.password,
+    input.authJson === undefined ? existing.openai_auth_json : input.authJson,
+    id
+  ).run();
+  return getDuckAddressById(db, id);
 }
 
 export async function deleteDuckAddress(db: D1Database, id: number): Promise<boolean> {

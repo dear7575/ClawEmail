@@ -132,10 +132,15 @@ export async function listRemoteInboxMessageIds(mailboxEmail: string, maxMessage
   return ids;
 }
 
-export async function readRemoteMail(mailboxEmail: string, providerMailId: string, connectionId?: string | null): Promise<MailDetail> {
+export async function readRemoteMail(
+  mailboxEmail: string,
+  providerMailId: string,
+  connectionId?: string | null,
+  markRead = false
+): Promise<MailDetail> {
   return await getMailClient(mailboxEmail, connectionId).mail.read({
     id: providerMailId,
-    markRead: false
+    markRead
   });
 }
 

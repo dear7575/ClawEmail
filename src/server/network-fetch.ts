@@ -12,6 +12,13 @@ export type NetworkFetchInit = {
   body?: string;
 };
 
+export type NetworkFetchResponse = {
+  status: number;
+  statusText: string;
+  headers: Headers;
+  body: Buffer;
+};
+
 const DEFAULT_TIMEOUT_MS = 10000;
 
 function readResponse(socket: Socket | TLSSocket): Promise<Buffer> {
@@ -48,7 +55,7 @@ function decodeChunkedBody(body: Buffer): Buffer {
   return Buffer.concat(decoded);
 }
 
-function parseHttpResponse(raw: Buffer): { status: number; statusText: string; body: Buffer } {
+function parseHttpResponse(raw: Buffer): NetworkFetchResponse {
   const separator = raw.indexOf("\r\n\r\n", 0, "utf8");
   if (separator < 0) throw new Error("系统代理返回了无效的 HTTP 响应");
   const head = raw.subarray(0, separator).toString("utf8");
@@ -57,16 +64,17 @@ function parseHttpResponse(raw: Buffer): { status: number; statusText: string; b
   const statusLine = lines[0] ?? "";
   const statusMatch = /^HTTP\/\d\.\d\s+(\d+)\s*(.*)$/i.exec(statusLine);
   if (!statusMatch) throw new Error(`系统代理返回了无效的状态行：${statusLine}`);
-  const headers = new Map<string, string>();
+  const headers = new Headers();
   for (const line of lines.slice(1)) {
     const index = line.indexOf(":");
     if (index < 0) continue;
-    headers.set(line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim());
+    headers.append(line.slice(0, index).trim(), line.slice(index + 1).trim());
   }
   const transferEncoding = headers.get("transfer-encoding")?.toLowerCase() ?? "";
   return {
     status: Number(statusMatch[1]),
     statusText: statusMatch[2] || "",
+    headers,
     body: transferEncoding.includes("chunked") ? decodeChunkedBody(rawBody) : rawBody
   };
 }
@@ -167,7 +175,7 @@ async function requestViaHttpProxy(
   init: NetworkFetchInit,
   proxyUrl: string,
   timeoutMs: number
-): Promise<Response> {
+): Promise<NetworkFetchResponse> {
   const proxy = new URL(proxyUrl);
   const proxyPort = Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80));
   const rawSocket = await connectSocket(proxy.hostname, proxyPort, timeoutMs);
@@ -224,11 +232,7 @@ async function requestViaHttpProxy(
   socket.write(`${requestLines.join("\r\n")}\r\n\r\n`);
 
   const raw = await readResponse(socket);
-  const parsed = parseHttpResponse(raw);
-  return new Response(new Uint8Array(parsed.body), {
-    status: parsed.status,
-    statusText: parsed.statusText
-  });
+  return parseHttpResponse(raw);
 }
 
 export async function fetchWithNetworkOptions(
@@ -238,7 +242,12 @@ export async function fetchWithNetworkOptions(
 ): Promise<Response> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (options.proxyUrl) {
-    return requestViaHttpProxy(new URL(url), init, options.proxyUrl, timeoutMs);
+    const response = await requestViaHttpProxy(new URL(url), init, options.proxyUrl, timeoutMs);
+    return new Response(new Uint8Array(response.body), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
   }
 
   const controller = new AbortController();
@@ -250,6 +259,37 @@ export async function fetchWithNetworkOptions(
       body: init.body,
       signal: controller.signal
     });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function requestWithNetworkOptions(
+  url: string,
+  init: NetworkFetchInit,
+  options: NetworkFetchOptions = {}
+): Promise<NetworkFetchResponse> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (options.proxyUrl) {
+    return requestViaHttpProxy(new URL(url), init, options.proxyUrl, timeoutMs);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      redirect: "manual",
+      signal: controller.signal
+    });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      body: Buffer.from(await response.arrayBuffer())
+    };
   } finally {
     clearTimeout(timer);
   }

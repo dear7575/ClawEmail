@@ -1445,6 +1445,25 @@ a:hover {
     accent-color: var(--primary);
 }
 
+.setting-select-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: min(100%, 420px);
+}
+
+.setting-select-trigger {
+    min-width: 220px;
+}
+
+.setting-select-control > span {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 700;
+}
+
 .settings-actions {
     display: flex;
     gap: 8px;
@@ -1749,7 +1768,7 @@ a:hover {
 }
 
 .duck-table {
-    overflow: hidden;
+    overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 22px;
     background: var(--card);
@@ -1758,11 +1777,12 @@ a:hover {
 
 .duck-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(160px, 1fr) 180px 130px;
-    gap: 12px;
+    grid-template-columns: minmax(250px, 1.3fr) minmax(200px, 0.95fr) minmax(230px, 0.9fr) minmax(110px, 0.65fr) 148px 250px;
+    min-width: 1210px;
+    gap: 14px;
     align-items: center;
     border-bottom: 1px solid var(--border-soft);
-    padding: 13px 16px;
+    padding: 12px 16px;
 }
 
 .duck-row:last-child {
@@ -1837,7 +1857,7 @@ a:hover {
 
 .mb-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) 108px 140px 126px 206px;
+    grid-template-columns: minmax(220px, 1fr) 108px 140px 126px minmax(260px, auto);
     gap: 12px;
     align-items: center;
     border-bottom: 1px solid var(--border-soft);
@@ -1862,15 +1882,17 @@ a:hover {
 .email-cell {
     min-width: 0;
     display: grid;
-    gap: 2px;
+    gap: 0;
 }
 
 .email-cell .e {
-    overflow-wrap: anywhere;
+    overflow: hidden;
     color: var(--foreground);
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .email-cell .pref,
@@ -1879,15 +1901,76 @@ a:hover {
     font-size: 11px;
 }
 
+.password-cell {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.password-cell .mono {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.credential-lines {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.credential-state {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.credential-state.ok {
+    color: var(--success);
+}
+
+.password-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.password-actions button.icon-btn {
+    width: 26px;
+    height: 26px;
+}
+
+.password-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    font-size: 11px;
+}
+
 .ops {
     display: flex;
     justify-content: flex-end;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    white-space: nowrap;
 }
 
 .ops button {
-    padding: 6px 9px;
+    flex: 0 0 auto;
+    padding: 6px 10px;
     font-size: 12px;
 }
 
@@ -2258,6 +2341,17 @@ a:hover {
     animation: confirm-in 120ms ease-out;
 }
 
+.credential-dialog {
+    width: min(760px, 100%);
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card-strong);
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+    animation: confirm-in 120ms ease-out;
+}
+
 .confirm-copy {
     min-width: 0;
     padding: 20px 20px 0;
@@ -2306,6 +2400,34 @@ a:hover {
 
 .confirm-input input {
     width: 100%;
+}
+
+.credential-form {
+    display: grid;
+    gap: 12px;
+    margin: 14px 20px 0;
+}
+
+.credential-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 850;
+}
+
+.credential-form input,
+.credential-form textarea {
+    width: 100%;
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.credential-form textarea {
+    min-height: 260px;
+    line-height: 1.45;
 }
 
 .confirm-actions {
@@ -2626,7 +2748,7 @@ a:hover {
     }
 
     .duck-row {
-        grid-template-columns: minmax(200px, 1fr) minmax(150px, 220px) minmax(140px, 1fr) 150px 120px;
+        grid-template-columns: minmax(250px, 1.3fr) minmax(200px, 0.95fr) minmax(230px, 0.9fr) minmax(110px, 0.65fr) 148px 250px;
     }
 
     .mb-row {

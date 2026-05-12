@@ -10,7 +10,8 @@ import {
 
 const sub2SettingsSchema = z.object({
   apiUrl: z.string().trim().max(500).optional(),
-  apiKey: z.string().trim().max(500).optional()
+  apiKey: z.string().trim().max(500).optional(),
+  defaultGroupId: z.coerce.number().int().positive().nullable().optional()
 });
 
 const accountPayloadSchema = z.object({
@@ -39,9 +40,6 @@ export async function sub2Routes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/sub2/push", async (request) => {
     const body = accountPayloadSchema.parse(request.body);
-    if (!body.groupId) {
-      throw new Error("请选择要推送到的 Sub2 分组");
-    }
     return {
       success: true,
       ...await pushSub2Account(body.input, body.groupId)

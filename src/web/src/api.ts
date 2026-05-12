@@ -97,6 +97,8 @@ export type DuckAddress = {
   note: string | null;
   status: string;
   raw_json: string;
+  has_openai_password: boolean;
+  has_openai_auth_json: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -104,6 +106,7 @@ export type DuckAddress = {
 export type SystemNetworkSettings = {
   proxyUrl: string;
   timeoutMs: number;
+  openAiOtpTimeoutMs: number;
 };
 
 export type TelegramSettings = {
@@ -117,6 +120,7 @@ export type Sub2Settings = {
   apiUrl: string;
   hasApiKey: boolean;
   apiKeyPreview: string | null;
+  defaultGroupId: number | null;
 };
 
 export type Sub2Group = {
@@ -128,6 +132,12 @@ export type Sub2PushResult = {
   success?: boolean;
   data: unknown;
   response?: unknown;
+  pushMode?: "sub2_auth" | "oauth_token" | "fallback_oauth_token";
+  fallbackReason?: string;
+  telegram?: {
+    sent: boolean;
+    error?: string;
+  };
 };
 
 export type RuntimeMode = "node" | "cloudflare" | "unknown";
@@ -285,6 +295,40 @@ export async function deleteMail(id: number): Promise<void> {
   });
 }
 
+export type ClearMailsResult = {
+  success: boolean;
+  deleted: number;
+  failed: number;
+  errors: Array<{
+    id: number;
+    mailboxEmail: string;
+    providerMailId: string;
+    error: string;
+  }>;
+};
+
+export async function clearMails(input: {
+  mailbox?: string;
+  connectionId?: string;
+} = {}): Promise<ClearMailsResult> {
+  const params = new URLSearchParams();
+  if (input.mailbox) params.set("mailbox", input.mailbox);
+  if (input.connectionId) params.set("connectionId", input.connectionId);
+  const query = params.toString();
+  const result = await fetch(`/api/mails${query ? `?${query}` : ""}`, {
+    method: "DELETE",
+    headers: {
+      "x-admin-password": adminPassword
+    }
+  });
+  const text = await result.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!result.ok && result.status !== 207) {
+    throw new Error(data?.error ?? `HTTP ${result.status}`);
+  }
+  return data as ClearMailsResult;
+}
+
 export type SendMailInput = {
   from: string;
   to: string[];
@@ -425,6 +469,7 @@ export async function fetchSub2Settings(): Promise<Sub2Settings> {
 export async function updateSub2Settings(input: {
   apiUrl?: string;
   apiKey?: string;
+  defaultGroupId?: number | null;
 }): Promise<Sub2Settings> {
   return requestJson<Sub2Settings>("/api/sub2/settings", {
     method: "PUT",
@@ -449,6 +494,36 @@ export async function pushSub2Account(input: unknown, groupId: number): Promise<
   return requestJson<Sub2PushResult>("/api/sub2/push", {
     method: "POST",
     body: JSON.stringify({ input, groupId })
+  });
+}
+
+export async function pushOpenAiDuckAddressToSub2(duckAddressId: number, groupId?: number | null): Promise<Sub2PushResult & { email?: string }> {
+  return requestJson<Sub2PushResult & { email?: string }>("/api/openai/duck-push-sub2", {
+    method: "POST",
+    body: JSON.stringify({ duckAddressId, groupId })
+  });
+}
+
+export async function fetchDuckAddressOpenAiPassword(duckAddressId: number): Promise<string> {
+  const result = await requestJson<{ password: string }>(`/api/duck/addresses/${duckAddressId}/openai-password`);
+  return result.password;
+}
+
+export async function fetchDuckAddressOpenAiAuthJson(duckAddressId: number): Promise<string> {
+  const result = await requestJson<{ authJson: string }>(`/api/duck/addresses/${duckAddressId}/openai-auth-json`);
+  return result.authJson;
+}
+
+export async function updateDuckAddressOpenAiCredentials(
+  duckAddressId: number,
+  input: {
+    password?: string | null;
+    authJson?: string | null;
+  }
+): Promise<DuckAddress> {
+  return requestJson<DuckAddress>(`/api/duck/addresses/${duckAddressId}/openai-credentials`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
   });
 }
 

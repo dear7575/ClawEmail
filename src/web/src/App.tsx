@@ -8,7 +8,8 @@ import {Button} from "./components/ui/button";
 import {Dialog, DialogContent, DialogDescription, DialogTitle} from "./components/ui/dialog";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./components/ui/select";
 import {PrefsBar, usePrefs} from "./i18n";
-import {LogOut} from "lucide-react";
+import {parseServerTime} from "./time";
+import {Copy, Eye, EyeOff, LogOut, Pencil} from "lucide-react";
 import {
     type ClawAuthStatus,
     convertSub2Account,
@@ -23,6 +24,8 @@ import {
     type DuckAddress,
     fetchConnections,
     fetchDuckAccounts,
+    fetchDuckAddressOpenAiAuthJson,
+    fetchDuckAddressOpenAiPassword,
     fetchDuckAddresses,
     fetchListeners,
     fetchListenerSettings,
@@ -41,6 +44,7 @@ import {
     type Mailbox,
     type MailDetail,
     type MailSummary,
+    pushOpenAiDuckAddressToSub2,
     pushSub2Account,
     refreshConnection,
     sendConnectionLoginCode,
@@ -52,6 +56,7 @@ import {
     type SystemNetworkSettings,
     type TelegramSettings,
     updateDuckAccountToken,
+    updateDuckAddressOpenAiCredentials,
     updateListenerSettings,
     updateSub2Settings,
     updateSystemNetworkSettings,
@@ -82,6 +87,13 @@ const LISTENER_STATUS_REFRESH_MS: Record<ListenerStatusRefreshInterval, number |
     "60": 60_000,
     "300": 300_000
 };
+
+function formatServerTime(value: string | null | undefined): string {
+    if (!value) return "—";
+    const date = parseServerTime(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString("sv-SE", {hour12: false});
+}
 
 function readInitialView(): View {
     if (typeof localStorage === "undefined") return "dashboard";
@@ -197,6 +209,7 @@ export function App() {
     });
     const [systemProxyInput, setSystemProxyInput] = useState("");
     const [systemTimeoutInput, setSystemTimeoutInput] = useState("10000");
+    const [openAiOtpTimeoutInput, setOpenAiOtpTimeoutInput] = useState("60000");
     const [telegramSettings, setTelegramSettings] = useState<TelegramSettings>({
         enabled: false,
         chatId: "",
@@ -206,7 +219,8 @@ export function App() {
     const [sub2Settings, setSub2Settings] = useState<Sub2Settings>({
         apiUrl: "",
         hasApiKey: false,
-        apiKeyPreview: null
+        apiKeyPreview: null,
+        defaultGroupId: null
     });
     const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
     const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
@@ -222,6 +236,15 @@ export function App() {
     const [selectedSub2GroupId, setSelectedSub2GroupId] = useState("");
     const [sub2GroupsBusy, setSub2GroupsBusy] = useState(false);
     const [sub2Busy, setSub2Busy] = useState(false);
+    const [sub2DefaultGroupIdInput, setSub2DefaultGroupIdInput] = useState("");
+    const [openAiPushBusyDuckAddressId, setOpenAiPushBusyDuckAddressId] = useState<number | null>(null);
+    const [openAiPasswordVisibleByDuckAddressId, setOpenAiPasswordVisibleByDuckAddressId] =
+        useState<Record<number, string>>({});
+    const [openAiPasswordBusyDuckAddressId, setOpenAiPasswordBusyDuckAddressId] = useState<number | null>(null);
+    const [openAiCredentialEditorAddress, setOpenAiCredentialEditorAddress] = useState<DuckAddress | null>(null);
+    const [openAiCredentialPasswordInput, setOpenAiCredentialPasswordInput] = useState("");
+    const [openAiCredentialAuthJsonInput, setOpenAiCredentialAuthJsonInput] = useState("");
+    const [openAiCredentialEditorBusy, setOpenAiCredentialEditorBusy] = useState(false);
 
     const activeConnections = useMemo(
         () => connections.filter((connection) => connection.status !== "disconnected"),
@@ -311,6 +334,9 @@ export function App() {
         }
         return {running, total: visibleListeners.length, errors};
     }, [visibleListeners]);
+
+    const sub2Ready = Boolean(sub2Settings.apiUrl && sub2Settings.hasApiKey && sub2Settings.defaultGroupId);
+    const openAiDuckPushSupported = getRuntimeMode() !== "cloudflare";
 
     function removeToast(id: number) {
         setToasts((items) => items.filter((item) => item.id !== id));
@@ -530,6 +556,12 @@ export function App() {
     }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
 
     useEffect(() => {
+        if (!password || view !== "settings") return;
+        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
+        loadSub2Groups().catch(reportError);
+    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
+
+    useEffect(() => {
         if (!password || view !== "duck") return;
         if (selectedDuckAccountId && activeDuckAccounts.some((account) => account.id === selectedDuckAccountId)) return;
         setSelectedDuckAccountId(activeDuckAccounts[ 0 ]?.id ?? "");
@@ -695,6 +727,7 @@ export function App() {
     function applySystemNetworkSettings(settings: SystemNetworkSettings) {
         setSystemProxyInput(settings.proxyUrl);
         setSystemTimeoutInput(String(settings.timeoutMs));
+        setOpenAiOtpTimeoutInput(String(settings.openAiOtpTimeoutMs));
     }
 
     async function loadSystemNetworkSettings() {
@@ -711,13 +744,19 @@ export function App() {
             showError("系统请求超时时间必须是数字");
             return;
         }
+        const openAiOtpTimeoutMs = Number(openAiOtpTimeoutInput);
+        if (!Number.isFinite(openAiOtpTimeoutMs)) {
+            showError("OpenAI 验证码等待超时时间必须是数字");
+            return;
+        }
         setSettingsBusy(true);
         try {
             const [listenerSaved, networkSaved, telegramSaved, sub2Saved] = await Promise.all([
                 updateListenerSettings(serverListenerSettings),
                 updateSystemNetworkSettings({
                     proxyUrl: systemProxyInput.trim(),
-                    timeoutMs
+                    timeoutMs,
+                    openAiOtpTimeoutMs
                 }),
                 updateTelegramSettings({
                     enabled: telegramEnabledInput,
@@ -726,7 +765,8 @@ export function App() {
                 }),
                 updateSub2Settings({
                     apiUrl: sub2ApiUrlInput.trim(),
-                    apiKey: sub2ApiKeyInput.trim() || undefined
+                    apiKey: sub2ApiKeyInput.trim() || undefined,
+                    defaultGroupId: sub2DefaultGroupIdInput ? Number(sub2DefaultGroupIdInput) : null
                 })
             ]);
             setServerListenerSettings(listenerSaved);
@@ -766,6 +806,7 @@ export function App() {
         setSub2Settings(settings);
         setSub2ApiUrlInput(settings.apiUrl);
         setSub2ApiKeyInput("");
+        setSub2DefaultGroupIdInput(settings.defaultGroupId ? String(settings.defaultGroupId) : "");
     }
 
     async function loadSub2Settings() {
@@ -782,7 +823,15 @@ export function App() {
             const groups = await fetchSub2Groups();
             setSub2Groups(groups);
             setSelectedSub2GroupId((current) => {
+                const defaultGroupId = sub2Settings.defaultGroupId ? String(sub2Settings.defaultGroupId) : "";
+                if (defaultGroupId && groups.some((group) => String(group.id) === defaultGroupId)) return defaultGroupId;
                 if (current && groups.some((group) => String(group.id) === current)) return current;
+                return groups[ 0 ]?.id ? String(groups[ 0 ].id) : "";
+            });
+            setSub2DefaultGroupIdInput((current) => {
+                if (current && groups.some((group) => String(group.id) === current)) return current;
+                const defaultGroupId = sub2Settings.defaultGroupId ? String(sub2Settings.defaultGroupId) : "";
+                if (defaultGroupId && groups.some((group) => String(group.id) === defaultGroupId)) return defaultGroupId;
                 return groups[ 0 ]?.id ? String(groups[ 0 ].id) : "";
             });
         } catch (err) {
@@ -815,20 +864,143 @@ export function App() {
     }
 
     async function handlePushSub2Account() {
-        const groupId = Number(selectedSub2GroupId);
-        if (!Number.isInteger(groupId) || groupId <= 0) {
-            showError("请选择要推送到的 Sub2 分组");
+        if (!sub2Settings.defaultGroupId) {
+            showError("请先在系统设置里选择 Sub2 默认推送分组");
             return;
         }
         setSub2Busy(true);
         try {
-            const result = await pushSub2Account(parseSub2SourceInput(), groupId);
+            const result = await pushSub2Account(parseSub2SourceInput(), sub2Settings.defaultGroupId);
             setSub2PreviewJson(JSON.stringify(result.data, null, 2));
             showStatus("账号已推送到 Sub2API");
         } catch (err) {
             reportError(err);
         } finally {
             setSub2Busy(false);
+        }
+    }
+
+    async function handlePushOpenAiDuckAddressToSub2(address: DuckAddress) {
+        if (!openAiDuckPushSupported) {
+            showError("Cloudflare 版不支持 OpenAI 接口登录推送，请使用 Node 或 Docker 版");
+            return;
+        }
+        if (!sub2Settings.defaultGroupId) {
+            showError("请先在系统设置里选择 Sub2 默认推送分组");
+            return;
+        }
+        if (!address.forwarding_mailbox_email) {
+            showError("该 Duck 邮箱没有绑定目标 Claw 邮箱，无法读取 OpenAI 验证码");
+            return;
+        }
+        setOpenAiPushBusyDuckAddressId(address.id);
+        try {
+            const result = await pushOpenAiDuckAddressToSub2(address.id, sub2Settings.defaultGroupId);
+            await loadDuckAddresses(selectedDuckAccount?.id);
+            const modeText = result.pushMode === "sub2_auth"
+                ? "Sub2 授权创建"
+                : result.pushMode === "fallback_oauth_token"
+                    ? `OAuth token 推送（授权分支已降级：${result.fallbackReason ?? "未知原因"}）`
+                    : "OAuth token 推送";
+            showStatus(
+                result.telegram?.sent === false
+                    ? `OpenAI 账号已推送到 Sub2API（${modeText}），Telegram 发送失败：${result.telegram.error ?? "未知错误"}`
+                    : `OpenAI 账号已推送到 Sub2API（${modeText}）· ${result.email || address.address}`
+            );
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setOpenAiPushBusyDuckAddressId(null);
+        }
+    }
+
+    async function handleRevealDuckOpenAiPassword(address: DuckAddress) {
+        const visiblePassword = openAiPasswordVisibleByDuckAddressId[address.id];
+        if (visiblePassword) {
+            setOpenAiPasswordVisibleByDuckAddressId((items) => {
+                const next = {...items};
+                delete next[address.id];
+                return next;
+            });
+            return;
+        }
+        setOpenAiPasswordBusyDuckAddressId(address.id);
+        try {
+            const passwordValue = await fetchDuckAddressOpenAiPassword(address.id);
+            setOpenAiPasswordVisibleByDuckAddressId((items) => ({
+                ...items,
+                [address.id]: passwordValue
+            }));
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setOpenAiPasswordBusyDuckAddressId(null);
+        }
+    }
+
+    function handleCopyDuckOpenAiPassword(address: DuckAddress) {
+        const passwordValue = openAiPasswordVisibleByDuckAddressId[address.id];
+        if (!passwordValue) return;
+        navigator.clipboard.writeText(passwordValue).catch(reportError);
+        showStatus("OpenAI 密码已复制");
+    }
+
+    async function handleOpenOpenAiCredentialEditor(address: DuckAddress) {
+        setOpenAiCredentialEditorAddress(address);
+        setOpenAiCredentialPasswordInput("");
+        setOpenAiCredentialAuthJsonInput("");
+        setOpenAiCredentialEditorBusy(true);
+        try {
+            const [passwordValue, authJsonValue] = await Promise.all([
+                address.has_openai_password
+                    ? fetchDuckAddressOpenAiPassword(address.id).catch(() => "")
+                    : Promise.resolve(""),
+                address.has_openai_auth_json
+                    ? fetchDuckAddressOpenAiAuthJson(address.id).catch(() => "")
+                    : Promise.resolve("")
+            ]);
+            setOpenAiCredentialPasswordInput(passwordValue);
+            setOpenAiCredentialAuthJsonInput(authJsonValue);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setOpenAiCredentialEditorBusy(false);
+        }
+    }
+
+    async function handleSaveOpenAiCredentials() {
+        if (!openAiCredentialEditorAddress) return;
+        const authJsonText = openAiCredentialAuthJsonInput.trim();
+        if (authJsonText) {
+            try {
+                JSON.parse(authJsonText);
+            } catch {
+                showError("OpenAI 授权信息必须是合法 JSON");
+                return;
+            }
+        }
+        setOpenAiCredentialEditorBusy(true);
+        try {
+            const row = await updateDuckAddressOpenAiCredentials(openAiCredentialEditorAddress.id, {
+                password: openAiCredentialPasswordInput || null,
+                authJson: authJsonText || null
+            });
+            setDuckAddresses((items) => items.map((item) => item.id === row.id ? row : item));
+            setOpenAiPasswordVisibleByDuckAddressId((items) => {
+                const next = {...items};
+                if (openAiCredentialPasswordInput) {
+                    next[row.id] = openAiCredentialPasswordInput;
+                } else {
+                    delete next[row.id];
+                }
+                return next;
+            });
+            setOpenAiCredentialEditorAddress(null);
+            showStatus("OpenAI 凭据已保存");
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setOpenAiCredentialEditorBusy(false);
         }
     }
 
@@ -1431,6 +1603,7 @@ export function App() {
                                     <div className="duck-row head">
                                         <span>Duck 邮箱</span>
                                         <span>目标邮箱</span>
+                                        <span>OpenAI 凭据</span>
                                         <span>备注</span>
                                         <span>创建于</span>
                                         <span>操作</span>
@@ -1444,14 +1617,75 @@ export function App() {
                                         <div className="duck-row" key={item.id}>
                                             <div className="email-cell">
                                                 <span className="e">{item.address}</span>
-                                                <span className="pref">本地记录</span>
                                             </div>
                                             <span className="time-cell">{item.forwarding_mailbox_email ?? "—"}</span>
+                                            <div className="password-cell">
+                                                <div className="credential-lines">
+                                                    <span className="mono">
+                                                        {openAiPasswordVisibleByDuckAddressId[item.id]
+                                                            ? openAiPasswordVisibleByDuckAddressId[item.id]
+                                                            : item.has_openai_password ? "********" : "—"}
+                                                    </span>
+                                                    <span className={item.has_openai_auth_json ? "credential-state ok" : "credential-state"}>
+                                                        授权 {item.has_openai_auth_json ? "已保存" : "未保存"}
+                                                    </span>
+                                                </div>
+                                                <div className="password-actions">
+                                                    {item.has_openai_password ? (
+                                                        <>
+                                                            <button
+                                                                className="icon-btn"
+                                                                onClick={() => handleRevealDuckOpenAiPassword(item)}
+                                                                disabled={openAiPasswordBusyDuckAddressId === item.id}
+                                                                title={openAiPasswordVisibleByDuckAddressId[item.id] ? "隐藏密码" : "查看密码"}
+                                                                aria-label={openAiPasswordVisibleByDuckAddressId[item.id] ? "隐藏密码" : "查看密码"}
+                                                            >
+                                                                {openAiPasswordBusyDuckAddressId === item.id ? "..." : (
+                                                                    openAiPasswordVisibleByDuckAddressId[item.id]
+                                                                        ? <EyeOff size={14} aria-hidden="true"/>
+                                                                        : <Eye size={14} aria-hidden="true"/>
+                                                                )}
+                                                            </button>
+                                                            {openAiPasswordVisibleByDuckAddressId[item.id] ? (
+                                                                <button
+                                                                    className="icon-btn"
+                                                                    onClick={() => handleCopyDuckOpenAiPassword(item)}
+                                                                    title="复制密码"
+                                                                    aria-label="复制密码"
+                                                                >
+                                                                    <Copy size={14} aria-hidden="true"/>
+                                                                </button>
+                                                            ) : null}
+                                                        </>
+                                                    ) : null}
+                                                    <button
+                                                        className="icon-btn"
+                                                        onClick={() => handleOpenOpenAiCredentialEditor(item)}
+                                                        title="编辑 OpenAI 凭据"
+                                                        aria-label="编辑 OpenAI 凭据"
+                                                    >
+                                                        <Pencil size={14} aria-hidden="true"/>
+                                                    </button>
+                                                </div>
+                                            </div>
                                             <span className="time-cell">{item.note ?? "—"}</span>
-                                            <span className="time-cell">{item.created_at}</span>
+                                            <span className="time-cell">{formatServerTime(item.created_at)}</span>
                                             <div className="ops">
                                                 <button
                                                     onClick={() => navigator.clipboard.writeText(item.address)}>复制
+                                                </button>
+                                                <button
+                                                    onClick={() => handlePushOpenAiDuckAddressToSub2(item)}
+                                                    disabled={
+                                                        item.status !== "active" ||
+                                                        !item.forwarding_mailbox_email ||
+                                                        !sub2Ready ||
+                                                        !openAiDuckPushSupported ||
+                                                        openAiPushBusyDuckAddressId === item.id
+                                                    }
+                                                    title={!item.forwarding_mailbox_email ? "需要先绑定目标 Claw 邮箱" : undefined}
+                                                >
+                                                    {openAiPushBusyDuckAddressId === item.id ? "推送中" : "推送 Sub2"}
                                                 </button>
                                                 <button onClick={() => setDuckAddressToDelete(item)}>删除记录</button>
                                             </div>
@@ -1470,6 +1704,17 @@ export function App() {
                         selectedMail={selectedMail}
                         onSelectMail={(id) => loadMail(id).catch(reportError)}
                         onRefresh={() => loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError)}
+                        onCleared={(deleted, failed, msg) => {
+                            if (deleted > 0) {
+                                setMails([]);
+                                setSelectedMail(null);
+                                loadMails(selectedMailbox, false, mailConnectionFilter(selectedMailbox)).catch(reportError);
+                            }
+                            showStatus(msg);
+                            if (failed > 0) {
+                                loadMails(selectedMailbox, false, mailConnectionFilter(selectedMailbox)).catch(reportError);
+                            }
+                        }}
                         onDeleted={(id, msg) => {
                             setMails((items) => items.filter((mail) => mail.id !== id));
                             setSelectedMail(null);
@@ -1545,32 +1790,15 @@ export function App() {
                                         ? `推送地址：${sub2Settings.apiUrl}`
                                         : "请先在系统设置里配置 Sub2API 地址和 APIKey"}
                                 </span>
-                                <div className="push-group-select">
-                                    <span>推送分组</span>
-                                    <Select
-                                        value={selectedSub2GroupId}
-                                        onValueChange={setSelectedSub2GroupId}
-                                        disabled={sub2Busy || sub2GroupsBusy || !sub2Groups.length}
-                                    >
-                                        <SelectTrigger className="toolbar-select push-group-trigger">
-                                            <SelectValue placeholder={sub2GroupsBusy ? "加载中" : "选择分组"} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {sub2Groups.map((group) => (
-                                                <SelectItem key={group.id} value={String(group.id)}>
-                                                    {group.name ? `${group.name} (#${group.id})` : `分组 #${group.id}`}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {!sub2GroupsBusy && !sub2Groups.length && <span className="push-group-empty">暂无可用分组</span>}
-                                </div>
+                                <span>
+                                    默认分组：{sub2Settings.defaultGroupId ? `#${sub2Settings.defaultGroupId}` : "未设置"}
+                                </span>
                                 <div>
                                     <button
-                                        onClick={loadSub2Groups}
-                                        disabled={sub2Busy || sub2GroupsBusy || !sub2Settings.apiUrl || !sub2Settings.hasApiKey}
+                                        onClick={() => setView("settings")}
+                                        disabled={sub2Busy}
                                     >
-                                        {sub2GroupsBusy ? "刷新中" : "刷新分组"}
+                                        设置默认分组
                                     </button>
                                     <button onClick={handleConvertSub2Account}
                                             disabled={sub2Busy || !sub2SourceJson.trim()}>
@@ -1579,7 +1807,7 @@ export function App() {
                                     <button
                                         className="primary"
                                         onClick={handlePushSub2Account}
-                                        disabled={sub2Busy || !sub2SourceJson.trim() || !selectedSub2GroupId}
+                                        disabled={sub2Busy || !sub2SourceJson.trim() || !sub2Settings.defaultGroupId}
                                     >
                                         {sub2Busy ? "推送中" : "推送账号"}
                                     </button>
@@ -1759,6 +1987,21 @@ export function App() {
                                     disabled={settingsBusy}
                                 />
                             </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>OpenAI 验证码等待超时</strong>
+                                    <small>等待 Claw 邮箱收到 OpenAI 验证码的最长时间，单位毫秒，默认 60000。</small>
+                                </span>
+                                <input
+                                    type="number"
+                                    min={15000}
+                                    max={300000}
+                                    step={1000}
+                                    value={openAiOtpTimeoutInput}
+                                    onChange={(event) => setOpenAiOtpTimeoutInput(event.target.value)}
+                                    disabled={settingsBusy}
+                                />
+                            </div>
                             <label className="setting-row">
                                 <span>
                                     <strong>Telegram 消息通知</strong>
@@ -1820,6 +2063,37 @@ export function App() {
                                     placeholder={sub2Settings.hasApiKey ? "留空则保留当前 APIKey" : "APIKey"}
                                     disabled={settingsBusy}
                                 />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Sub2 默认推送分组</strong>
+                                    <small>账号推送和 Claw 邮箱一键推送都会使用该分组，保存后无需每次选择。</small>
+                                </span>
+                                <div className="setting-select-control">
+                                    <Select
+                                        value={sub2DefaultGroupIdInput}
+                                        onValueChange={setSub2DefaultGroupIdInput}
+                                        disabled={settingsBusy || sub2GroupsBusy || !sub2Groups.length}
+                                    >
+                                        <SelectTrigger className="toolbar-select setting-select-trigger">
+                                            <SelectValue placeholder={sub2GroupsBusy ? "加载中" : "选择分组"} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {sub2Groups.map((group) => (
+                                                <SelectItem key={group.id} value={String(group.id)}>
+                                                    {group.name ? `${group.name} (#${group.id})` : `分组 #${group.id}`}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <button
+                                        onClick={loadSub2Groups}
+                                        disabled={settingsBusy || sub2GroupsBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
+                                    >
+                                        {sub2GroupsBusy ? "刷新中" : "刷新分组"}
+                                    </button>
+                                    {!sub2GroupsBusy && !sub2Groups.length && <span>暂无可用分组</span>}
+                                </div>
                             </div>
                             <div className="settings-actions">
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>
@@ -1958,6 +2232,77 @@ export function App() {
                                 disabled={duckBusy}
                             >
                                 {duckBusy ? "删除中..." : "确认删除"}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                ) : null}
+            </Dialog>
+
+            <Dialog
+                open={Boolean(openAiCredentialEditorAddress)}
+                onOpenChange={(open) => {
+                    if (!openAiCredentialEditorBusy && !open) setOpenAiCredentialEditorAddress(null);
+                }}
+            >
+                {openAiCredentialEditorAddress ? (
+                    <DialogContent
+                        className="credential-dialog"
+                        onEscapeKeyDown={(event) => {
+                            if (openAiCredentialEditorBusy) event.preventDefault();
+                        }}
+                        onPointerDownOutside={(event) => {
+                            if (openAiCredentialEditorBusy) event.preventDefault();
+                        }}
+                    >
+                        <div className="confirm-copy">
+                            <DialogTitle>编辑 OpenAI 凭据</DialogTitle>
+                            <DialogDescription>
+                                密码用于已注册账号再次登录，授权信息为登录成功后获取的 OAuth JSON。
+                            </DialogDescription>
+                        </div>
+                        <div className="confirm-mail">
+                            <strong>{openAiCredentialEditorAddress.address}</strong>
+                            <span className="mono">
+                                目标邮箱：{openAiCredentialEditorAddress.forwarding_mailbox_email ?? "未记录"}
+                            </span>
+                        </div>
+                        <div className="credential-form">
+                            <label>
+                                <span>OpenAI 密码</span>
+                                <input
+                                    type="text"
+                                    value={openAiCredentialPasswordInput}
+                                    onChange={(event) => setOpenAiCredentialPasswordInput(event.target.value)}
+                                    disabled={openAiCredentialEditorBusy}
+                                    autoFocus
+                                    spellCheck={false}
+                                />
+                            </label>
+                            <label>
+                                <span>授权信息 JSON</span>
+                                <textarea
+                                    value={openAiCredentialAuthJsonInput}
+                                    onChange={(event) => setOpenAiCredentialAuthJsonInput(event.target.value)}
+                                    disabled={openAiCredentialEditorBusy}
+                                    spellCheck={false}
+                                    placeholder="{ }"
+                                />
+                            </label>
+                        </div>
+                        <div className="confirm-actions">
+                            <Button
+                                variant="ghost"
+                                onClick={() => setOpenAiCredentialEditorAddress(null)}
+                                disabled={openAiCredentialEditorBusy}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                variant="default"
+                                onClick={handleSaveOpenAiCredentials}
+                                disabled={openAiCredentialEditorBusy}
+                            >
+                                {openAiCredentialEditorBusy ? "保存中..." : "保存"}
                             </Button>
                         </div>
                     </DialogContent>

@@ -10,6 +10,7 @@ import {
   listActiveMailboxes,
   listAttachments,
   listMailProviderIds,
+  listMailsForDeletion,
   listMails,
   markMailRead,
   saveMail
@@ -21,6 +22,11 @@ const listQuerySchema = z.object({
   sync: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0)
+});
+
+const clearQuerySchema = z.object({
+  connectionId: z.string().min(1).optional(),
+  mailbox: z.string().optional()
 });
 
 function attachmentList(mail: MailDetail) {
@@ -109,6 +115,46 @@ export async function mailRoutes(app: FastifyInstance): Promise<void> {
     reply.header("content-type", attachment.contentType || "application/octet-stream");
     reply.header("content-disposition", `attachment; filename="${encodeURIComponent(attachment.filename)}"`);
     return reply.send(attachment.stream());
+  });
+
+  app.delete("/api/mails", async (request, reply) => {
+    const query = clearQuerySchema.parse(request.query);
+    const mailboxEmail = query.mailbox?.trim().toLowerCase();
+    const mails = listMailsForDeletion({
+      connectionId: query.connectionId,
+      mailboxEmail
+    });
+    const errors: Array<{ id: number; mailboxEmail: string; providerMailId: string; error: string }> = [];
+    let deleted = 0;
+    for (const mail of mails) {
+      try {
+        await deleteRemoteMail(mail.mailbox_email, mail.provider_mail_id, mail.connection_id);
+        if (deleteMailById(mail.id)) {
+          deleted += 1;
+        }
+      } catch (error) {
+        errors.push({
+          id: mail.id,
+          mailboxEmail: mail.mailbox_email,
+          providerMailId: mail.provider_mail_id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    if (errors.length > 0) {
+      return reply.code(207).send({
+        success: false,
+        deleted,
+        failed: errors.length,
+        errors
+      });
+    }
+    return {
+      success: true,
+      deleted,
+      failed: 0,
+      errors: []
+    };
   });
 
   app.delete("/api/mails/:id", async (request) => {
