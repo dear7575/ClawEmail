@@ -6,44 +6,43 @@
 仓库结构：
 
 ```text
-src/
-  server/                Fastify 5 后端（SQLite + Claw SDK + Dashboard 内部接口）
-    config.ts            环境变量解析（zod）
-    db.ts                better-sqlite3 schema 与 DAO
-    runtime-config.ts    运行时凭据（优先读 SQLite，再回退 .env）
-    claw-dashboard.ts    Claw Dashboard 内部 HTTP 接口封装
-    claw-mail.ts         @clawemail/node-sdk 客户端池 + 发件/回信/删信/列表
-    listener-manager.ts  每邮箱 WS 长连接 + 指数退避重连
-    sse.ts               SSE 广播总线
-    routes/              auth / mailboxes / mails / send / events
-    index.ts             Fastify 启动 + 静态托管前端
-  web/                   Vite 7 + React 19 单页应用
-    src/App.tsx          主壳：登录/路由/连接卡/工具栏
-    src/api.ts           前端调用层（统一 X-Admin-Password / ?token=）
-    src/i18n.tsx         中英双语 + 暗亮主题
-    src/components/      InboxView / MailboxesView / ComposeDrawer / ListenersDrawer / ListenersView
-    src/hooks.ts         可拖拽栏宽（localStorage 持久化）
+backend/
+  app/                   FastAPI 后端（SQLite + Claw/Duck/Sub2/Telegram 集成）
+    api/                 HTTP 路由，保持旧版 /api/* 响应结构兼容
+    core/                配置、日志、数据库会话
+    repositories/        SQLite 数据访问层
+    services/            业务服务与外部接口封装
+    main.py              FastAPI 应用入口，可直接由 IDE 启动
+  requirements.txt       后端运行依赖
+frontend/
+  app/                   Next.js App Router 前端
+    App.tsx              主界面：登录、邮箱、邮件、Duck、Sub2、通知、设置
+    api.ts               前端调用层（统一 X-Admin-Password / ?token=）
+    components/          收件箱、邮箱、弹窗等页面组件
+  next.config.mjs        /api/* 与 /health 转发到 FastAPI
+scripts/
+  docker-entrypoint.sh   Docker 单镜像启动脚本
 ```
 
 ## 1. 功能矩阵
 
 | 模块 | 能力 | 实现位置 |
 |---|---|---|
-| Claw 绑定 | 邮箱 + 验证码两步登录；自动取 `auth/me` / `workspaces` / `mailboxes` / `api-keys`；写入 SQLite | `routes/claw-auth.ts`、`runtime-config.ts` |
-| Claw 邮箱 | 创建（前缀 `^[a-z0-9]{1,32}$`）、列表、`?sync=true` 与远端做差量同步、删除（拒绝删主邮箱） | `routes/mailboxes.ts`、`claw-dashboard.ts` |
-| 通讯规则 | 同步并保存 `commLevel` / `extReceiveType` / `extSendType`；邮箱页可配置个人 / 内部 / 外部通信范围 | `routes/mailboxes.ts`、`CommunicationRulesDrawer.tsx` |
-| 实时收件 | 每个 `active` 邮箱一条 WS 监听；落库为 `mails` + `attachments`；SSE `event: mail` 推送 | `listener-manager.ts`、`sse.ts` |
-| 收件同步 | `GET /api/mails?sync=true`：远端 INBOX `id` 列表 → 删本地多余、补本地缺失 | `routes/mails.ts` |
-| 邮件详情 | 返回行 + 解析后的原始 JSON + 附件元数据 | `routes/mails.ts` |
-| 删信 | SDK `moveMessages([id], "Trash")` 远端删除 + 本地行删除 | `claw-mail.ts`、`routes/mails.ts` |
-| 发件 | 仅允许 `from` 是本地已管理邮箱 | `routes/send.ts` |
-| 回信 | 基于本地 `mailId` 反查 `provider_mail_id` 调 SDK | `routes/send.ts` |
-| 附件下载 | 不缓存原始字节，按需经 SDK 流式拉取 | `routes/mails.ts` |
-| 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `routes/events.ts`、`ListenersDrawer.tsx` |
-| Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `routes/duck.ts`、`duck-email.ts`、`App.tsx` |
-| 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `routes/telegram.ts`、`telegram.ts`、`App.tsx` |
-| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；按系统设置里的默认 OpenAI 分组推送 | `routes/sub2.ts`、`sub2.ts`、`App.tsx` |
-| 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `i18n.tsx`、`hooks.ts` |
+| Claw 绑定 | 邮箱 + 验证码两步登录；自动取 `auth/me` / `workspaces` / `mailboxes` / `api-keys`；写入 SQLite | `backend/app/api/claw_auth.py`、`backend/app/services/claw_auth.py` |
+| Claw 邮箱 | 创建（前缀 `^[a-z0-9]{1,32}$`）、列表、`?sync=true` 与远端做差量同步、删除（拒绝删主邮箱） | `backend/app/api/mailboxes.py`、`backend/app/services/claw_dashboard.py` |
+| 通讯规则 | 同步并保存 `commLevel` / `extReceiveType` / `extSendType`；邮箱页可配置个人 / 内部 / 外部通信范围 | `backend/app/api/mailboxes.py`、`frontend/app/components/CommunicationRulesDrawer.tsx` |
+| 实时收件 | 每个 `active` 邮箱一条监听状态；邮件入库为 `mails` + `attachments`；SSE `event: mail` 推送 | `backend/app/services/listeners.py`、`backend/app/services/sse.py` |
+| 收件同步 | `GET /api/mails?sync=true`：远端 INBOX `id` 列表 → 删本地多余、补本地缺失 | `backend/app/api/mails.py`、`backend/app/services/mails.py` |
+| 邮件详情 | 返回行 + 解析后的原始 JSON + 附件元数据 | `backend/app/api/mails.py` |
+| 删信 | 远端删除 + 本地行删除 | `backend/app/services/claw_mail.py`、`backend/app/api/mails.py` |
+| 发件 | 仅允许 `from` 是本地已管理邮箱 | `backend/app/api/send.py` |
+| 回信 | 基于本地 `mailId` 反查 `provider_mail_id` 调远端接口 | `backend/app/api/send.py` |
+| 附件下载 | 不缓存原始字节，按需流式拉取 | `backend/app/api/mails.py` |
+| 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `backend/app/api/events.py`、`frontend/app/components/ListenersDrawer.tsx` |
+| Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `backend/app/api/duck.py`、`backend/app/services/duck.py`、`frontend/app/App.tsx` |
+| 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `backend/app/api/telegram.py`、`backend/app/services/telegram.py` |
+| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；按系统设置里的默认 OpenAI 分组推送 | `backend/app/api/sub2.py`、`backend/app/services/sub2.py` |
+| 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `frontend/app/i18n.tsx`、`frontend/app/hooks.ts` |
 
 ## 2. Claw 验证码登录链
 
@@ -100,7 +99,7 @@ X-Admin-Password: <ADMIN_PASSWORD>
 ?token=<ADMIN_PASSWORD>
 ```
 
-`X-Admin-Password` 与 `query.token` 命中其一即放行（见 `src/server/index.ts: extractAdminPassword`）。
+`X-Admin-Password` 与 `query.token` 命中其一即放行（见 `backend/app/main.py` 中的鉴权中间件）。
 
 ### 4.2 端点清单
 
@@ -182,7 +181,7 @@ event: mail
 data: {"mailboxEmail":"vercel.4@claw.163.com","id":42,"providerMailId":"..."}
 ```
 
-校验：所有入参经 zod 解析；失败返回 `400 {error:"invalid input", details:[...]}`。
+校验：所有入参经 Pydantic 解析；失败返回结构化 JSON 错误。
 
 ## 5. 数据持久化
 
@@ -218,78 +217,59 @@ Authorization: Bearer <DDG_TOKEN>
 
 ## 5.2 Sub2API 账号推送
 
-“账号推送”页面接收 `temp/test.json` 结构的 ChatGPT 账号 JSON，转换为 Sub2API 的账号导入数据。转换时保持 `temp/toSub2.json` 或 `SUB2_PROXY_TEMPLATE_JSON` 中的 `proxies` 原样不变，并使用其中第一个 `proxy_key` 绑定账号。
+“账号推送”页面接收 `temp/test.json` 结构的 ChatGPT 账号 JSON，转换为 Sub2API 的账号导入数据。推送时优先使用 `SUB2_PROXY_TEMPLATE_JSON` 中的 `proxies`；未配置模板代理时，会从 Sub2API 当前可用代理列表获取一个 active 代理并绑定账号。`temp/toSub2.json` 只是示例输出格式，不作为运行时代理配置源。
 
 推送流程：
 
 1. 从“系统设置”读取 Sub2API 地址和 APIKey。
 2. 调用 `GET /api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active` 获取 OpenAI 可用分组。
 3. 在“系统设置”里保存默认推送分组。
-4. 调用 `POST /api/v1/admin/accounts/data`，账号写入 `group_ids: [默认分组ID]`。
+4. 未配置 `SUB2_PROXY_TEMPLATE_JSON` 时，从 `GET /api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc` 获取可用代理。
+5. 调用 Sub2API 创建账号，账号写入 `group_ids: [默认分组ID]`。
 
 Sub2API 地址可以填写根地址，例如 `https://sub2.example.com`，也可以填写完整 `/api/v1/admin/accounts/data` 导入地址。Admin API Key 会按 Sub2API 约定放到 `x-api-key` 请求头；如果配置值以 `Bearer ` 开头，则按 JWT 令牌放到 `Authorization` 请求头。
 
 ## 6. 监听器与重连
 
-`src/server/listener-manager.ts`：
+`backend/app/services/listeners.py` 维护邮箱监听状态快照，`backend/app/services/sse.py` 提供 SSE 广播总线。
 
-- 启动条件：邮箱 `status === "active"` 且 `hasClawMailConfig()` 为真
-- 退避序列：`[1, 2, 4, 8, 16, 30]` 秒
-- `client.ws.onMessage` 收到 mailId → `client.mail.read({markRead:true})` → `saveMail` → SSE `mail` 广播
-- `client.ws.onDisconnect` 触发 `scheduleReconnect`
-- 删邮箱、断开 Claw 时会显式 `stopMailboxListener` 关闭 WS
-
-`/api/listeners` 当前返回字段：`{ email, connected, retry }`。前端 `ListenersDrawer` 同时兼容了未来可能扩展的 `status / startedAt / lastEventAt / error` 字段。
+`/api/listeners` 当前返回字段：`{ connectionId, email, status, connected, retry, error }`。前端 `ListenersDrawer` 会展示运行状态、重试次数和异常摘要。
 
 ## 7. 环境变量
 
 ```env
 NODE_ENV=production
-PORT=3000
-ADMIN_PASSWORD=change-me
-
-# 以下变量是"兜底值"，验证码登录成功后会被 SQLite 中的值覆盖
-CLAW_API_KEY=
-CLAW_DASHBOARD_COOKIE=
-CLAW_WORKSPACE_ID=
-CLAW_PARENT_MAILBOX_ID=
-CLAW_ROOT_PREFIX=
-CLAW_DOMAIN=claw.163.com
-
-SYSTEM_PROXY_URL=
-SYSTEM_REQUEST_TIMEOUT_MS=10000
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-SUB2_API_URL=
-SUB2_API_KEY=
-SUB2_PROXY_TEMPLATE_JSON=
-
+HOST=127.0.0.1
+PORT=8000
+FRONTEND_HOST=0.0.0.0
+FRONTEND_PORT=3000
+BACKEND_URL=http://127.0.0.1:8000
+LOG_LEVEL=info
+ADMIN_PASSWORD=admin@123456
+HOST_PORT=3000
+DATA_DIR=./data
 DATABASE_PATH=./data/app.db
 ```
 
-读取顺序（`runtime-config.ts`）：`SQLite app_settings` → `process.env`，缺一则 API 报 `... is required; connect Claw first`。
+`.env` 只保留启动配置和本地数据库路径。Claw、系统代理、Telegram、Sub2API 等业务配置通过 Web 的“系统设置”写入 SQLite，不再放到 `.env`。
 
 ## 8. 本地运行
 
-应用监听端口由 `PORT` 环境变量控制，默认 **3000**（host `0.0.0.0`）。
+本地开发需要分别启动 FastAPI 后端和 Next.js 前端。后端默认监听 `127.0.0.1:8000`，前端默认监听 `0.0.0.0:3001`，前端通过 `BACKEND_URL` 将 `/api/*` 和 `/health` 转发到后端。
 
 ```powershell
+cd backend
+pip install -r requirements.txt
+python app/main.py
+```
+
+```powershell
+cd frontend
 npm install
-npm run build
-npm start
-# 默认 http://localhost:3000
-# 改端口： $env:PORT=8080; npm start
+npm run dev
 ```
 
-开发：
-
-```powershell
-npm run dev          # tsx 跑后端，监听 :3000（受 PORT 控制）
-npm run dev:web      # Vite 跑前端，监听 :5173
-npm run typecheck    # tsc --noEmit
-```
-
-`npm run build` = `vite build` 产出静态资源到 `dist/web` + `esbuild` 打包后端到 `dist/server/index.js`，`@clawemail/node-sdk`、`fastify`、`better-sqlite3` 等保持 external。
+默认访问地址为 `http://localhost:3001`。生产 Docker 镜像内会同时启动两个进程，并只对外暴露前端端口 `3000`。
 
 ## 9. Docker 部署
 
@@ -299,7 +279,7 @@ npm run typecheck    # tsc --noEmit
 ghcr.io/dear7575/clawemail:latest
 ```
 
-容器内进程固定监听 `3000`，宿主端口由 `HOST_PORT` 控制；SQLite 数据挂载到 `/app/data`。
+镜像内同时运行 FastAPI 后端和 Next.js 前端：后端只监听容器内 `127.0.0.1:8000`，前端监听 `0.0.0.0:3000` 并转发 `/api/*` 到后端。宿主端口由 `HOST_PORT` 控制，SQLite 数据挂载到 `/app/data`。
 
 ### 服务器部署
 
@@ -316,19 +296,96 @@ curl http://localhost:3000/health
 常用配置：
 
 ```env
-ADMIN_PASSWORD=change-me
+ADMIN_PASSWORD=admin@123456
 HOST_PORT=3000
+LOG_LEVEL=info
 DATA_DIR=./data
-SYSTEM_PROXY_URL=
-SYSTEM_REQUEST_TIMEOUT_MS=10000
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-SUB2_API_URL=
-SUB2_API_KEY=
-SUB2_PROXY_TEMPLATE_JSON=
+HOST=127.0.0.1
+PORT=8000
+FRONTEND_HOST=0.0.0.0
+FRONTEND_PORT=3000
+BACKEND_URL=http://127.0.0.1:8000
+DATABASE_PATH=./data/app.db
 ```
 
-如果容器无法直连 DuckDuckGo、Telegram 或 Sub2API，可以在 Web 的“系统设置”里填写系统代理地址，或在 `.env` 里设置 `SYSTEM_PROXY_URL`。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。旧的 `DUCK_PROXY_URL` / `DUCK_REQUEST_TIMEOUT_MS` 仍作为兼容兜底值读取。
+如果容器无法直连 DuckDuckGo、Telegram 或 Sub2API，可以在 Web 的“系统设置”里填写系统代理地址。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。
+
+## 10. Python + Next.js 工作区
+
+当前仓库使用前后端分离结构：
+
+- `backend`：FastAPI 后端，提供 `/api/*`、`/health`、SQLite 数据访问和外部服务集成。
+- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 Next rewrites 转发到后端。
+
+已迁移到 FastAPI 的兼容接口：
+
+- `GET /health`
+- `GET /api/auth/claw/status`
+- `GET /api/connections`
+- `GET /api/connections/:id`
+- `GET /api/listeners`
+- `GET /api/listener-settings`
+- `PUT /api/listener-settings`
+- `POST /api/auth/claw/send-code`
+- `POST /api/auth/claw/verify-code`
+- `POST /api/auth/claw/refresh`
+- `POST /api/auth/claw/logout`
+- `POST /api/connections/send-code`
+- `POST /api/connections/verify-code`
+- `POST /api/connections/:id/refresh`
+- `POST /api/connections/:id/logout`
+- `GET /api/mailboxes`
+- `GET /api/mailboxes?sync=true`
+- `POST /api/mailboxes`
+- `POST /api/mailboxes/:id/comm-settings`
+- `DELETE /api/mailboxes/:id`
+- `GET /api/mails`
+- `GET /api/mails?sync=true`
+- `GET /api/mails/:id`
+- `GET /api/mails/:id/attachments/:partId`
+- `DELETE /api/mails`
+- `DELETE /api/mails/:id`
+- `POST /api/send`
+- `POST /api/reply`
+- `GET /api/events`
+- `GET /api/system/network-settings`
+- `PUT /api/system/network-settings`
+- `GET /api/duck/network-settings`
+- `PUT /api/duck/network-settings`
+- `GET /api/duck/accounts`
+- `POST /api/duck/accounts`
+- `PATCH /api/duck/accounts/:id`
+- `DELETE /api/duck/accounts/:id`
+- `GET /api/duck/addresses`
+- `POST /api/duck/accounts/:id/addresses`
+- `PATCH /api/duck/addresses/:id`
+- `DELETE /api/duck/addresses/:id`
+- `GET /api/duck/addresses/:id/openai-password`
+- `GET /api/duck/addresses/:id/openai-auth-json`
+- `PATCH /api/duck/addresses/:id/openai-credentials`
+- `GET /api/telegram/settings`
+- `PUT /api/telegram/settings`
+- `POST /api/telegram/send`
+- `GET /api/sub2/settings`
+- `PUT /api/sub2/settings`
+- `GET /api/sub2/groups`
+- `POST /api/sub2/convert`
+- `POST /api/sub2/push`
+- `POST /api/openai/duck-push-sub2`
+
+后端启动：
+
+```bash
+cd backend
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端启动：
+
+```bash
+cd frontend
+npm run dev
+```
 
 更新版本：
 
@@ -351,74 +408,13 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```bash
 docker run -d --name clawemail \
   -p 3000:3000 \
-  -e ADMIN_PASSWORD=change-me \
+  -e ADMIN_PASSWORD=admin@123456 \
   -e DATABASE_PATH=/app/data/app.db \
   -v $PWD/data:/app/data \
   ghcr.io/dear7575/clawemail:latest
 ```
 
 `./data` 挂到 `/app/data` 持久化 SQLite。GitHub Actions 会在推送 `main` 后自动构建并推送 `latest` 镜像。
-
-## 10. Cloudflare 无服务器部署
-
-本仓库同时提供 Cloudflare Workers + Static Assets + D1 的部署入口：
-
-```text
-src/cloudflare/          Cloudflare Worker API（无 Fastify / better-sqlite3 / Node SDK）
-migrations/0001_initial.sql
-wrangler.toml
-```
-
-限制边界：
-
-- Cloudflare 版不运行常驻邮箱 WebSocket 监听器；收件箱通过前端刷新或 `GET /api/mails?sync=true` 请求触发同步。
-- D1 替代本地 SQLite 文件；不需要自建服务器或挂载磁盘。
-- 附件仍然不入库，下载时从 Claw 远端按需转发。
-- D1 表结构会在首次访问 `/api/*` 时自动初始化。
-
-推荐部署方式：
-
-1. 先 Fork 本仓库到自己的 GitHub 账号。
-2. 进入 Cloudflare 控制台。
-3. 进入 `Workers & Pages` → `Create application` → `Import a repository`。
-4. 选择自己的 fork 仓库。
-5. 将项目名称改为小写，例如 `clawemail`、`clawemail-cf`。
-6. 按页面步骤一路下一步，直到部署完成。
-
-本地 Wrangler 手动部署：
-
-```powershell
-npx wrangler login
-npx wrangler d1 create clawemail
-```
-
-如果 Wrangler 提示是否把 D1 配置写入 `wrangler.toml`，选择 `Yes`。手动填写时应补上 `database_id`：
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "clawemail"
-database_id = "你的 D1 database_id"
-```
-
-设置管理密码并初始化 D1：
-
-```powershell
-npx wrangler secret put ADMIN_PASSWORD
-npm run cf:migrate
-```
-
-部署：
-
-```powershell
-npm run cf:deploy
-```
-
-手动部署时也可以跳过 `npm run cf:migrate`，应用会在首次 API 请求时自动建表；保留该命令是为了需要显式执行迁移的场景。
-
-Cloudflare 版入口与原 API 保持一致，前端仍调用同源 `/api/*`。如果需要回到原服务器版，继续使用 `npm run build && npm start` 或 Docker 部署即可。
-
-
 
 ## 致谢
 

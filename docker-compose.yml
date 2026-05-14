@@ -9,21 +9,18 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: production
-      PORT: 3000
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      HOST: ${HOST:-127.0.0.1}
+      PORT: ${PORT:-8000}
+      FRONTEND_HOST: ${FRONTEND_HOST:-0.0.0.0}
+      FRONTEND_PORT: ${FRONTEND_PORT:-3000}
+      BACKEND_URL: ${BACKEND_URL:-http://127.0.0.1:8000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin@123456}
       DATABASE_PATH: /app/data/app.db
-      CLAW_DOMAIN: ${CLAW_DOMAIN:-claw.163.com}
-      SYSTEM_PROXY_URL: ${SYSTEM_PROXY_URL:-}
-      SYSTEM_REQUEST_TIMEOUT_MS: ${SYSTEM_REQUEST_TIMEOUT_MS:-10000}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      SUB2_API_URL: ${SUB2_API_URL:-}
-      SUB2_API_KEY: ${SUB2_API_KEY:-}
-      SUB2_PROXY_TEMPLATE_JSON: ${SUB2_PROXY_TEMPLATE_JSON:-}
     volumes:
       - ${DATA_DIR:-./data}:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

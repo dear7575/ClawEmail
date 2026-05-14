@@ -4,6 +4,16 @@ data/
 .env
 .env.local
 .codex-run/
+.idea/
+.serena/
+temp/
+__pycache__/
+.pytest_cache/
+*.pyc
+.next/
+frontend/.next/
+frontend/node_modules/
+backend/.pytest_cache/
 npm-debug.log*
 /.superpowers/
 /.spec-workflow/

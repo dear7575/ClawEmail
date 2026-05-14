@@ -4,9 +4,16 @@
 .claude
 .spec-workflow
 node_modules
+frontend/node_modules
+frontend/.next
+backend/.pytest_cache
+backend/**/__pycache__
+backend/**/*.pyc
 dist
 data
 npm-debug.log*
+.next
+.pytest_cache
 .env
 .env.*
 !.env.example
