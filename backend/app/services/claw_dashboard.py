@@ -178,7 +178,7 @@ class ClawDashboardClient:
 
         try:
             logger.debug("请求 Claw Dashboard：method=%s url=%s", method, url)
-            with self.client_factory(timeout=30) as client:
+            with self.client_factory(timeout=30, trust_env=False) as client:
                 response = client.request(method, url, **kwargs)
             logger.debug("Claw Dashboard 响应：method=%s url=%s status=%s", method, url, response.status_code)
             return response

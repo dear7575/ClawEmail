@@ -6,8 +6,8 @@ from app.main import app
 
 
 class RecordingClient:
-    def __init__(self, responses: list[httpx.Response], calls: list[dict], **kwargs) -> None:
-        self.responses = deque(responses)
+    def __init__(self, responses: deque[httpx.Response], calls: list[dict], **kwargs) -> None:
+        self.responses = responses
         self.calls = calls
         self.kwargs = kwargs
 
@@ -48,9 +48,10 @@ def reset_sub2_service(tmp_path, monkeypatch, responses: list[httpx.Response] | 
     system_module.network_settings_service = network_service_module.network_settings_service
     calls: list[dict] = []
     if responses is not None:
+        response_queue = deque(responses)
         sub2_service_module.sub2_service = sub2_service_module.Sub2Service(
             repository=repository_module.settings_repository,
-            client_factory=lambda **kwargs: RecordingClient(responses, calls, **kwargs),
+            client_factory=lambda **kwargs: RecordingClient(response_queue, calls, **kwargs),
         )
         sub2_api_module.sub2_service = sub2_service_module.sub2_service
     else:
@@ -265,3 +266,60 @@ def test_push_sub2_account_reuses_matching_proxy_without_create(tmp_path, monkey
     assert calls[1]["method"] == "POST"
     assert calls[1]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
     assert calls[1]["json"]["proxy_id"] == 9
+
+
+def test_push_sub2_account_via_auth_login_uses_openai_oauth_endpoints(tmp_path, monkeypatch) -> None:
+    responses = [
+        httpx.Response(200, json={"data": {"items": [{
+            "id": 5,
+            "name": "proxy-5",
+            "protocol": "http",
+            "host": "127.0.0.1",
+            "port": 7890,
+            "username": "",
+            "password": "",
+        }]}}),
+        httpx.Response(200, json={"code": 0, "data": {
+            "auth_url": "https://auth.openai.com/oauth?state=generated-state",
+            "session_id": "session-1",
+        }}),
+        httpx.Response(200, json={"code": 0, "data": {"id": 100}}),
+    ]
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, responses)
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    repository.set("sub2.defaultGroupId", "12")
+    import app.services.sub2 as sub2_service_module
+
+    authorized_requests = []
+
+    def authorize(request):
+        authorized_requests.append(request)
+        return sub2_service_module.Sub2AuthLoginCallback(code="oauth-code", state="", scope="")
+
+    result = sub2_service_module.sub2_service.push_data_via_auth_login(
+        sub2_service_module.convert_openai_oauth_to_sub2({
+            "email": "user@example.com",
+            "accessToken": "access-token",
+            "expiresAt": "2026-05-13T12:00:00Z",
+            "userId": "user-id",
+            "accountId": "account-id",
+            "planType": "free",
+        }),
+        None,
+        authorize,
+    )
+
+    assert result["data"]["accounts"][0]["group_ids"] == [12]
+    assert len(authorized_requests) == 1
+    assert authorized_requests[0].auth_url == "https://auth.openai.com/oauth?state=generated-state"
+    assert authorized_requests[0].session_id == "session-1"
+    assert authorized_requests[0].proxy_id == 5
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc"
+    assert calls[1]["url"] == "https://sub2.example.com/api/v1/admin/openai/generate-auth-url"
+    assert calls[1]["json"] == {"proxy_id": 5}
+    assert calls[2]["url"] == "https://sub2.example.com/api/v1/admin/openai/create-from-oauth"
+    assert calls[2]["json"]["session_id"] == "session-1"
+    assert calls[2]["json"]["code"] == "oauth-code"
+    assert calls[2]["json"]["state"] == "generated-state"
+    assert calls[2]["json"]["proxy_id"] == 5

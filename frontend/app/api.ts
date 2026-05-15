@@ -144,6 +144,14 @@ export type Sub2PushResult = {
   };
 };
 
+export type OpenAiDuckPushJobStatus = {
+  success: boolean;
+  jobId: string;
+  status: "running" | "succeeded" | "failed";
+  result?: (Sub2PushResult & { email?: string }) | null;
+  error?: string | null;
+};
+
 export type RuntimeMode = "server" | "unknown";
 
 export type PagedResult<T> = {
@@ -192,7 +200,14 @@ async function requestJson<T>(
     headers
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
+  }
   if (!response.ok) {
     const details = Array.isArray(data?.details)
       ? data.details
@@ -214,6 +229,15 @@ export async function verifyAdminPassword(value: string): Promise<ClawAuthStatus
 export async function fetchConnections(): Promise<ClawAuthStatus[]> {
   const data = await requestJson<{ items: ClawAuthStatus[] }>("/api/connections");
   return data.items;
+}
+
+function parseResponseBody(text: string): any {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text };
+  }
 }
 
 export async function sendConnectionLoginCode(email: string): Promise<void> {
@@ -341,7 +365,7 @@ export async function clearMails(input: {
     }
   });
   const text = await result.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseResponseBody(text);
   if (!result.ok && result.status !== 207) {
     throw new Error(data?.error ?? `HTTP ${result.status}`);
   }
@@ -517,10 +541,26 @@ export async function pushSub2Account(input: unknown, groupId: number): Promise<
 }
 
 export async function pushOpenAiDuckAddressToSub2(duckAddressId: number, groupId?: number | null): Promise<Sub2PushResult & { email?: string }> {
-  return requestJson<Sub2PushResult & { email?: string }>("/api/openai/duck-push-sub2", {
+  const started = await requestJson<OpenAiDuckPushJobStatus>("/api/openai/duck-push-sub2", {
     method: "POST",
     body: JSON.stringify({ duckAddressId, groupId })
   });
+  return waitForOpenAiDuckPushJob(started.jobId);
+}
+
+export async function fetchOpenAiDuckPushJob(jobId: string): Promise<OpenAiDuckPushJobStatus> {
+  return requestJson<OpenAiDuckPushJobStatus>(`/api/openai/duck-push-sub2/jobs/${encodeURIComponent(jobId)}`);
+}
+
+async function waitForOpenAiDuckPushJob(jobId: string): Promise<Sub2PushResult & { email?: string }> {
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    const job = await fetchOpenAiDuckPushJob(jobId);
+    if (job.status === "succeeded" && job.result) return job.result;
+    if (job.status === "failed") throw new Error(job.error || "OpenAI Duck 推送失败");
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
+  }
+  throw new Error("OpenAI Duck 推送仍在后台执行，请稍后刷新 Duck 地址状态");
 }
 
 export async function fetchDuckAddressOpenAiPassword(duckAddressId: number): Promise<string> {

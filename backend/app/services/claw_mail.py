@@ -152,16 +152,16 @@ class ClawMailClient:
         return str(api_key)
 
     def client_options(self) -> dict[str, Any]:
-        """构造 httpx 客户端选项，统一应用系统代理和超时设置。
+        """构造 Claw 邮件 HTTP 客户端选项，默认直连 Claw 上游。
 
         返回:
-            可传给 httpx.Client 的 timeout/proxy 选项。
+            可传给 httpx.Client 的超时和环境代理隔离选项。
         """
 
         settings = self.network_service.get()
         return {
             "timeout": settings.timeout_ms / 1000,
-            "proxy": settings.proxy_url or None,
+            "trust_env": False,
         }
 
     def ensure_token(self, uid: str, connection_id: str | None = None) -> str:
@@ -251,6 +251,47 @@ class ClawMailClient:
         logger.debug("Claw Coremail 调用成功：uid=%s func=%s status=%s", uid, func, response.status_code)
         return parse_coremail_response(body)
 
+    def list_inbox_messages(
+        self,
+        mailbox_email: str,
+        max_messages: int = 500,
+        connection_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """分页读取收件箱远端邮件摘要。
+
+        参数:
+            mailbox_email: Claw 邮箱地址。
+            max_messages: 最多读取的邮件数量。
+            connection_id: Claw 连接 ID；为空时使用 legacy 连接。
+
+        返回:
+            Coremail 邮件摘要列表，按 Coremail 返回顺序排列。
+        """
+
+        logger.info("开始同步收件箱摘要：mailbox=%s max=%s", mailbox_email, max_messages)
+        summaries: list[dict[str, Any]] = []
+        page_size = 100
+        for start in range(0, max_messages, page_size):
+            messages = self.coremail_call(
+                mailbox_email,
+                "mbox:listMessages",
+                {
+                    "fid": folder_id("INBOX"),
+                    "order": "date",
+                    "desc": True,
+                    "start": start,
+                    "limit": min(page_size, max_messages - start),
+                },
+                connection_id,
+            ) or []
+            for message in messages:
+                if isinstance(message, dict) and message.get("id"):
+                    summaries.append(message)
+            if len(messages) < page_size:
+                break
+        logger.info("收件箱摘要同步完成：mailbox=%s count=%s", mailbox_email, len(summaries))
+        return summaries
+
     def list_inbox_message_ids(
         self,
         mailbox_email: str,
@@ -268,27 +309,7 @@ class ClawMailClient:
             远端 provider_mail_id 列表，按 Coremail 返回顺序排列。
         """
 
-        logger.info("开始同步收件箱 ID：mailbox=%s max=%s", mailbox_email, max_messages)
-        ids: list[str] = []
-        page_size = 100
-        for start in range(0, max_messages, page_size):
-            messages = self.coremail_call(
-                mailbox_email,
-                "mbox:listMessages",
-                {
-                    "fid": folder_id("INBOX"),
-                    "order": "date",
-                    "desc": True,
-                    "start": start,
-                    "limit": min(page_size, max_messages - start),
-                },
-                connection_id,
-            ) or []
-            for message in messages:
-                if isinstance(message, dict) and message.get("id"):
-                    ids.append(str(message["id"]))
-            if len(messages) < page_size:
-                break
+        ids = [str(message["id"]) for message in self.list_inbox_messages(mailbox_email, max_messages, connection_id)]
         logger.info("收件箱 ID 同步完成：mailbox=%s count=%s", mailbox_email, len(ids))
         return ids
 

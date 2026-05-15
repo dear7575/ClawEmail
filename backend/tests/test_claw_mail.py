@@ -59,18 +59,39 @@ def ok_response(value) -> httpx.Response:
     return httpx.Response(200, json={"code": "S_OK", "var": value})
 
 
+class DashboardRecordingClient:
+    def __init__(self, response: httpx.Response, calls: list[dict], **kwargs) -> None:
+        self.response = response
+        self.calls = calls
+        self.kwargs = kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    def request(self, method: str, url: str, **kwargs):
+        self.calls.append({"method": method, "url": url, "kwargs": kwargs, "client_kwargs": self.kwargs})
+        return self.response
+
+
 def test_claw_mail_lists_inbox_message_ids_via_coremail_proxy(tmp_path, monkeypatch) -> None:
     client, calls = reset_claw_mail_client(tmp_path, monkeypatch, [
         token_response(),
         ok_response([{"id": "m1"}, {"id": "m2"}]),
     ])
+    client.network_service.repository.set("system.proxyUrl", "http://127.0.0.1:7890/")
 
     ids = client.list_inbox_message_ids("demo@claw.163.com", max_messages=10)
 
     assert ids == ["m1", "m2"]
     assert calls[0]["url"] == "https://claw.163.com/claw-api-gateway/open/v1/mail/auth/token"
+    assert calls[0]["client_kwargs"] == {"timeout": 10.0, "trust_env": False}
     assert calls[0]["kwargs"]["headers"]["authorization"] == "Bearer api-key"
     assert calls[1]["url"] == "https://claw.163.com/claw-api-gateway/api/coremail/proxy"
+    assert "proxy" not in calls[1]["client_kwargs"]
+    assert calls[1]["client_kwargs"]["trust_env"] is False
     assert calls[1]["kwargs"]["params"] == {
         "uid": "demo@claw.163.com",
         "func": "mbox:listMessages",
@@ -97,3 +118,19 @@ def test_claw_mail_send_uses_compose_continue_then_deliver(tmp_path, monkeypatch
     assert calls[1]["kwargs"]["json"]["action"] == "continue"
     assert calls[2]["kwargs"]["json"]["id"] == "compose-1"
     assert calls[2]["kwargs"]["json"]["action"] == "deliver"
+
+
+def test_claw_dashboard_disables_environment_proxy(monkeypatch) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    import app.services.claw_dashboard as claw_dashboard_module
+
+    calls: list[dict] = []
+    response = httpx.Response(200, json={"success": True, "code": 200, "result": {"email": "user@163.com"}})
+    dashboard = claw_dashboard_module.ClawDashboardClient(
+        client_factory=lambda **kwargs: DashboardRecordingClient(response, calls, **kwargs),
+    )
+
+    result = dashboard.get_auth_me(cookie="session=1")
+
+    assert result == {"email": "user@163.com"}
+    assert calls[0]["client_kwargs"] == {"timeout": 30, "trust_env": False}

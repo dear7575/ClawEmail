@@ -1,9 +1,11 @@
 import json
 import logging
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -117,6 +119,39 @@ class Sub2PushResponse(BaseModel):
     response: Any | None = None
 
 
+@dataclass(slots=True)
+class Sub2AuthLoginRequest:
+    """Sub2 OpenAI 授权登录请求。"""
+
+    auth_url: str
+    session_id: str
+    email: str
+    account: dict[str, Any]
+    proxy_id: int | None
+
+
+@dataclass(slots=True)
+class Sub2AuthLoginCallback:
+    """Sub2 OpenAI 授权登录回调参数。"""
+
+    code: str
+    state: str
+    scope: str = ""
+
+
+class Sub2AuthBranchFallbackError(RuntimeError):
+    """Sub2 授权登录遇到手机号步骤时使用的降级异常。"""
+
+
+def is_sub2_auth_branch_fallback_error(error: Any) -> bool:
+    """判断异常是否需要从 Sub2 授权登录降级到 OAuth token 推送。"""
+
+    return isinstance(error, Sub2AuthBranchFallbackError) or (
+        re.search(r"add[-_ ]?phone|phone[_-]?verification|phone[_-]?number|绑定手机号|手机", str(error), re.I)
+        is not None
+    )
+
+
 def trim_string(value: str | None) -> str:
     """归一化可空字符串配置。"""
 
@@ -206,6 +241,27 @@ def normalize_sub2_proxies_url(api_url: str) -> str:
 
     parsed = urlparse(normalize_sub2_import_url(api_url))
     path = parsed.path.removesuffix("/admin/accounts/data") + "/admin/proxies"
+    return urlunparse(parsed._replace(path=path, params="", query="", fragment=""))
+
+
+def normalize_sub2_openai_auth_url(api_url: str, action: str) -> str:
+    """生成 Sub2 OpenAI 授权登录接口地址。
+
+    参数:
+        api_url: 用户配置的 Sub2API 地址。
+        action: 授权登录动作，仅允许 generate-auth-url 或 create-from-oauth。
+
+    返回:
+        Sub2 OpenAI 授权登录接口完整地址。
+
+    异常:
+        ValueError: 动作名称不在白名单内。
+    """
+
+    if action not in {"generate-auth-url", "create-from-oauth"}:
+        raise ValueError("Sub2 OpenAI 授权登录动作无效")
+    parsed = urlparse(normalize_sub2_import_url(api_url))
+    path = parsed.path.removesuffix("/admin/accounts/data") + f"/admin/openai/{action}"
     return urlunparse(parsed._replace(path=path, params="", query="", fragment=""))
 
 
@@ -365,6 +421,39 @@ def unwrap_sub2_data(body: Any) -> Any:
     if isinstance(body, dict) and "data" in body:
         return body["data"]
     return body
+
+
+def extract_sub2_auth_session(body: Any) -> dict[str, str]:
+    """从 Sub2 授权登录响应中提取 auth_url 和 session_id。
+
+    参数:
+        body: Sub2 generate-auth-url 接口响应体。
+
+    返回:
+        包含 auth_url 和 session_id 的字典。
+
+    异常:
+        RuntimeError: 响应结构无效或缺少必要字段。
+    """
+
+    data = unwrap_sub2_data(body)
+    if not isinstance(data, dict):
+        raise RuntimeError("Sub2API 授权登录响应格式无效")
+    auth_url = string_field(data, "auth_url")
+    session_id = string_field(data, "session_id")
+    if not auth_url or not session_id:
+        raise RuntimeError("Sub2API 授权登录响应缺少 auth_url 或 session_id")
+    return {"auth_url": auth_url, "session_id": session_id}
+
+
+def auth_url_state(auth_url: str) -> str:
+    """从 Sub2 授权 URL 中提取 state 参数。"""
+
+    try:
+        parsed = urlparse(auth_url)
+        return dict(parse_qsl(parsed.query)).get("state", "").strip()
+    except Exception:
+        return ""
 
 
 def as_record(value: Any, field: str) -> dict[str, Any]:
@@ -815,6 +904,82 @@ class Sub2Service:
         }
         logger.info("Sub2 账号推送完成：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
         return result
+
+    def push_data_via_auth_login(
+        self,
+        data: dict[str, Any],
+        group_id: int | None,
+        authorize: Callable[[Sub2AuthLoginRequest], Sub2AuthLoginCallback],
+    ) -> dict[str, Any]:
+        """通过 Sub2 OpenAI 授权登录分支创建账号。
+
+        参数:
+            data: 已转换的 Sub2 导入数据。
+            group_id: 本次推送分组 ID；为空时使用默认分组。
+            authorize: 使用当前 OpenAI 会话打开 Sub2 授权 URL 并返回 OAuth 回调参数。
+
+        返回:
+            实际推送数据和 Sub2API 响应。
+
+        异常:
+            Sub2AuthBranchFallbackError: 授权分支缺少 code/state 或遇到手机号步骤。
+            RuntimeError: Sub2API 请求失败。
+        """
+
+        settings = self._require_settings()
+        resolved_group_id = self.resolve_push_group_id(group_id, settings)
+        prepared = apply_sub2_group(self.ensure_data_proxy(data, settings), resolved_group_id)
+        proxies = proxy_by_key(prepared)
+        responses: list[Any] = []
+        accounts = prepared.get("accounts") if isinstance(prepared.get("accounts"), list) else []
+        logger.info("开始通过 Sub2 授权登录创建账号：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            proxy = proxies.get(str(account.get("proxy_key") or ""), {})
+            proxy_id = self.resolve_proxy_id(proxy, settings)
+            generated_response = self._request(
+                "POST",
+                normalize_sub2_openai_auth_url(settings.api_url, "generate-auth-url"),
+                settings,
+                {"proxy_id": proxy_id} if proxy_id else {},
+            )
+            generated = self._sub2_json_response(generated_response, "Sub2API 生成 OpenAI 授权地址失败", "接口返回失败")
+            auth_session = extract_sub2_auth_session(generated)
+            credentials = account.get("credentials") if isinstance(account.get("credentials"), dict) else {}
+            callback = authorize(Sub2AuthLoginRequest(
+                auth_url=auth_session["auth_url"],
+                session_id=auth_session["session_id"],
+                email=str(credentials.get("email") or account.get("name") or ""),
+                account=account,
+                proxy_id=proxy_id,
+            ))
+            state = callback.state or auth_url_state(auth_session["auth_url"])
+            if not callback.code or not state:
+                logger.warning("Sub2 授权登录缺少 code/state：sessionId=%s", auth_session["session_id"])
+                raise Sub2AuthBranchFallbackError("Sub2 授权登录未拿到完整 OAuth callback code/state")
+            payload: dict[str, Any] = {
+                "session_id": auth_session["session_id"],
+                "code": callback.code,
+                "state": state,
+                "name": account.get("name"),
+                "concurrency": account.get("concurrency"),
+                "priority": account.get("priority"),
+                "group_ids": [resolved_group_id],
+                "confirm_mixed_channel_risk": True,
+            }
+            if proxy_id:
+                payload["proxy_id"] = proxy_id
+            create_response = self._request(
+                "POST",
+                normalize_sub2_openai_auth_url(settings.api_url, "create-from-oauth"),
+                settings,
+                payload,
+            )
+            responses.append(self._sub2_json_response(create_response, "Sub2API 授权创建账号失败", "接口返回失败"))
+            logger.info("Sub2 授权登录创建账号成功：name=%s groupId=%s proxyId=%s", account.get("name"), resolved_group_id, proxy_id)
+        logger.info("Sub2 授权登录创建账号完成：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
+        return {"data": prepared, "response": responses}
 
     def resolve_push_group_id(self, group_id: int | None, settings: Sub2Settings) -> int:
         """解析本次推送应该使用的 Sub2 分组 ID。"""
