@@ -48,16 +48,21 @@ def reset_mail_services(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", database_url)
     import app.core.config as config_module
     import app.db.mail_repository as mail_repository_module
+    import app.services.listeners as listeners_module
     import app.services.mailboxes as mailboxes_service_module
     import app.services.mails as mails_service_module
 
     config_module.get_settings.cache_clear()
     importlib.reload(mail_repository_module)
+    importlib.reload(listeners_module)
     importlib.reload(mailboxes_service_module)
     importlib.reload(mails_service_module)
+    import app.api.events as events_api_module
     import app.api.mailboxes as mailboxes_api_module
     import app.api.mails as mails_api_module
 
+    events_api_module.listener_manager = listeners_module.listener_manager
+    events_api_module.listener_manager.worker_enabled = False
     mailboxes_api_module.mailbox_service = mailboxes_service_module.mailbox_service
     mails_api_module.mail_service = mails_service_module.mail_service
     return mail_repository_module.mail_repository, mailboxes_service_module.mailbox_service
@@ -228,3 +233,18 @@ def test_clear_mails_deletes_filtered_remote_and_local_rows(tmp_path, monkeypatc
     assert response.json() == {"success": True, "deleted": 1, "failed": 0, "errors": []}
     assert client.get("/api/mails").json()["count"] == 1
     assert fake_mail_client.deleted_mails == [("one@claw.163.com", "remote-1", "legacy")]
+
+
+def test_create_mailbox_registers_listener_snapshot(tmp_path, monkeypatch, test_client) -> None:
+    _repository, mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    mailbox_service.dashboard = FakeDashboard()
+    client = test_client
+
+    created = client.post("/api/mailboxes", json={"connectionId": "conn-1", "suffix": "demo"})
+    listeners = client.get("/api/listeners")
+
+    assert created.status_code == 201
+    assert listeners.status_code == 200
+    assert listeners.json()["items"][0]["connectionId"] == "conn-1"
+    assert listeners.json()["items"][0]["email"] == "demo@claw.163.com"
+    assert listeners.json()["items"][0]["status"] == "starting"

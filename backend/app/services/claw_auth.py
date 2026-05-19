@@ -5,6 +5,7 @@ from app.db.claw_repository import LEGACY_CONNECTION_ID, ClawRepository, claw_re
 from app.db.mail_repository import MailRepository, mail_repository
 from app.db.settings_repository import SettingsRepository, settings_repository
 from app.services.claw_dashboard import ClawDashboardClient, claw_dashboard_client, validate_login_email
+from app.services.listeners import listener_manager
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,19 @@ def connection_to_auth_status(connection: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def connection_has_complete_credentials(connection: dict[str, Any]) -> bool:
+    """判断连接是否具备可进行远端在线校验的本地凭据。"""
+
+    return bool(
+        connection.get("api_key")
+        and connection.get("dashboard_cookie")
+        and connection.get("workspace_id")
+        and connection.get("parent_mailbox_id")
+        and connection.get("root_prefix")
+        and connection.get("domain")
+    )
+
+
 def email_domain(email: str) -> str:
     """从邮箱地址中提取域名，缺失 @ 时回退到 Claw 默认域。"""
 
@@ -99,21 +113,44 @@ class ClawAuthService:
     def status(self, connection_id: str | None = None) -> dict[str, Any]:
         """读取指定 Claw 连接的鉴权状态。"""
 
-        return connection_to_auth_status(self.repository.resolve_connection(connection_id))
+        connection = self.repository.resolve_connection(connection_id)
+        return connection_to_auth_status(self.refresh_connection_liveness(connection)) if connection else connection_to_auth_status(None)
 
     def list_connections(self) -> list[dict[str, Any]]:
-        """列出所有 Claw 连接状态，包括已断开的历史连接。"""
+        """列出前端展示用的 Claw 连接状态，同一身份只返回一条。"""
 
         return [
-            connection_to_auth_status(connection)
-            for connection in self.repository.list_connections(include_disconnected=True)
+            connection_to_auth_status(self.refresh_connection_liveness(connection))
+            for connection in self.repository.list_display_connections()
         ]
 
     def get_connection(self, connection_id: str) -> dict[str, Any] | None:
         """读取单个 Claw 连接状态。"""
 
         connection = self.repository.get_connection(connection_id)
-        return connection_to_auth_status(connection) if connection else None
+        return connection_to_auth_status(self.refresh_connection_liveness(connection)) if connection else None
+
+    def refresh_connection_liveness(self, connection: dict[str, Any]) -> dict[str, Any]:
+        """用 Dashboard 会话轻量校验连接在线状态，失败时标记为断开。
+
+        参数:
+            connection: 本地连接记录。
+
+        返回:
+            校验后的连接记录；远端会话不可用时返回已断开状态。
+        """
+
+        connection_id = str(connection.get("id") or "")
+        if connection.get("status") == "disconnected" or not connection_has_complete_credentials(connection):
+            return connection
+        try:
+            self.dashboard.get_auth_me(cookie=str(connection["dashboard_cookie"]))
+            return connection
+        except Exception as exc:
+            logger.warning("Claw 连接在线校验失败，标记为断开：connection=%s error=%s", connection_id, exc)
+            self.repository.mark_disconnected(connection_id)
+            listener_manager.mark_connection_stopped(connection_id)
+            return self.repository.get_connection(connection_id) or {**connection, "status": "disconnected"}
 
     def send_code(self, email: str) -> None:
         """发送 Claw 登录验证码并缓存临时 Cookie。"""
@@ -153,6 +190,27 @@ class ClawAuthService:
             self.settings_repository.delete_many(AUTH_SETTING_KEYS)
         logger.info("Claw 连接已断开：connection=%s", target_id)
         return self.status(connection_id)
+
+    def delete_connection(self, connection_id: str) -> bool:
+        """删除本地 Claw 连接及其缓存数据，不调用 Claw 远端。"""
+
+        connection = self.repository.get_connection(connection_id)
+        if not connection:
+            logger.warning("删除 Claw 连接失败，连接不存在：connection=%s", connection_id)
+            return False
+        listener_manager.mark_connection_stopped(connection_id)
+        cache_result = self.mail_repository.delete_connection_cache(connection_id)
+        deleted = self.repository.delete_connection(connection_id)
+        if connection_id == LEGACY_CONNECTION_ID:
+            self.settings_repository.delete_many(AUTH_SETTING_KEYS)
+        logger.info(
+            "Claw 连接本地删除完成：connection=%s success=%s mailboxCount=%s mailCount=%s",
+            connection_id,
+            deleted,
+            cache_result["mailboxes"],
+            cache_result["mails"],
+        )
+        return deleted
 
     def connect_with_cookie(self, cookie: str, preferred_connection_id: str | None = None) -> dict[str, Any]:
         """使用 Dashboard Cookie 拉取 Claw 账号上下文并保存连接。
@@ -211,12 +269,20 @@ class ClawAuthService:
             "dashboard_cookie": cookie,
             "status": "active",
         })
+        duplicate_connection_ids = self.repository.mark_duplicate_identity_disconnected(
+            user_email,
+            workspace["id"],
+            connection_id,
+        )
+        for duplicate_connection_id in duplicate_connection_ids:
+            listener_manager.mark_connection_stopped(duplicate_connection_id)
         logger.info(
-            "Claw 连接保存成功：connection=%s userEmail=%s workspaceId=%s mailboxCount=%s",
+            "Claw 连接保存成功：connection=%s userEmail=%s workspaceId=%s mailboxCount=%s duplicateCount=%s",
             connection_id,
             user_email,
             workspace["id"],
             len(mailboxes),
+            len(duplicate_connection_ids),
         )
         # 连接成功后立即把 Dashboard 邮箱快照写入本地缓存，减少前端首次加载空白状态。
         for mailbox in mailboxes:
@@ -235,6 +301,7 @@ class ClawAuthService:
                 "ext_receive_type": mailbox.get("ext_receive_type"),
                 "ext_send_type": mailbox.get("ext_send_type"),
             })
+        listener_manager.sync_mailboxes(connection_id, mailboxes)
         if connection_id == LEGACY_CONNECTION_ID:
             # 保留旧 Node 配置键，迁移期间让新旧后端可以共享同一套连接信息。
             self.settings_repository.set("claw.apiKey", api_key["apiKey"])

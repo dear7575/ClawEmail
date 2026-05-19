@@ -274,6 +274,12 @@ export async function disconnectConnection(connectionId: string): Promise<ClawAu
   });
 }
 
+export async function deleteConnection(connectionId: string): Promise<void> {
+  await requestJson<{ success: boolean }>(`/api/connections/${encodeURIComponent(connectionId)}/delete`, {
+    method: "POST"
+  });
+}
+
 export async function fetchMailboxes(sync = false, connectionId?: string): Promise<Mailbox[]> {
   const params = new URLSearchParams();
   if (sync) params.set("sync", "true");

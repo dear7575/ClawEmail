@@ -3,7 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ClawEmail",
-  description: "ClawEmail migration workspace"
+  description: "ClawEmail migration workspace",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico"
+  }
 };
 
 export default function RootLayout({

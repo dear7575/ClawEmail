@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.db.mail_repository import MailRepository, mail_repository
 from app.services.claw_dashboard import ClawDashboardClient, claw_dashboard_client
+from app.services.listeners import listener_manager
 
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,8 @@ class MailboxService:
                     "ext_receive_type": mailbox.get("ext_receive_type"),
                     "ext_send_type": mailbox.get("ext_send_type"),
                 })
+            if connection_id:
+                listener_manager.sync_mailboxes(connection_id, remote_mailboxes)
             logger.info("Claw 邮箱列表同步完成：connection=%s count=%s", connection_id or "all", len(remote_mailboxes))
         mailboxes = self.repository.list_mailboxes(connection_id=connection_id)
         logger.debug("读取本地邮箱列表：connection=%s count=%s", connection_id or "all", len(mailboxes))
@@ -115,6 +118,8 @@ class MailboxService:
             "ext_send_type": 1,
         })
         logger.info("邮箱创建完成：mailboxId=%s email=%s", saved["id"], saved["email"])
+        if saved.get("connection_id"):
+            listener_manager.sync_mailboxes(saved["connection_id"], self.repository.list_active_mailboxes(saved["connection_id"]))
         return saved
 
     def update_comm_settings(self, mailbox_id: str, body: CommunicationSettingsUpdate) -> dict | None:
@@ -174,6 +179,8 @@ class MailboxService:
             mailbox.get("connection_id"),
         )
         deleted = self.repository.mark_mailbox_deleted(mailbox_id)
+        if mailbox.get("connection_id"):
+            listener_manager.sync_mailboxes(mailbox["connection_id"], self.repository.list_active_mailboxes(mailbox["connection_id"]))
         logger.info("邮箱删除完成：mailboxId=%s success=%s", mailbox_id, deleted)
         return deleted
 

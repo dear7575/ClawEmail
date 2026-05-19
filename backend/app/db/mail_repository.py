@@ -464,6 +464,27 @@ class MailRepository:
                 deleted += 1
         return {"success": True, "deleted": deleted, "failed": 0, "errors": []}
 
+    def delete_connection_cache(self, connection_id: str) -> dict[str, int]:
+        """删除指定连接关联的本地邮箱、邮件和附件缓存。"""
+
+        mails = self.list_mails_for_deletion(connection_id=connection_id)
+        mailbox_count = len(self.list_mailboxes(connection_id=connection_id, include_deleted=True))
+        with self.engine.begin() as connection:
+            for mail in mails:
+                connection.execute(text("DELETE FROM attachments WHERE mail_id = :mail_id"), {"mail_id": mail["id"]})
+            mail_result = connection.execute(
+                text("DELETE FROM mails WHERE connection_id = :connection_id"),
+                {"connection_id": connection_id},
+            )
+            mailbox_result = connection.execute(
+                text("DELETE FROM mailboxes WHERE connection_id = :connection_id"),
+                {"connection_id": connection_id},
+            )
+        return {
+            "mailboxes": mailbox_result.rowcount if mailbox_result.rowcount >= 0 else mailbox_count,
+            "mails": mail_result.rowcount if mail_result.rowcount >= 0 else len(mails),
+        }
+
 
 def parse_mail_raw_json(mail: dict[str, Any]) -> Any:
     """解析本地邮件保存的原始 JSON。"""

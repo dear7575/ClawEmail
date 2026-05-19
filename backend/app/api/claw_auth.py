@@ -115,3 +115,20 @@ def logout_connection(connection_id: str) -> dict[str, Any]:
     """断开指定 Claw 连接。"""
 
     return claw_auth_service.logout(connection_id)
+
+
+@router.post("/api/connections/{connection_id}/delete")
+def delete_connection_with_post(connection_id: str) -> dict[str, bool]:
+    """删除指定 Claw 连接的本地记录，兼容不支持 DELETE 的部署层。"""
+
+    return delete_connection(connection_id)
+
+
+@router.delete("/api/connections/{connection_id}")
+def delete_connection(connection_id: str) -> dict[str, bool]:
+    """删除指定 Claw 连接的本地记录。"""
+
+    logger.info("API 删除 Claw 连接：connection=%s", connection_id)
+    if not claw_auth_service.delete_connection(connection_id):
+        raise HTTPException(status_code=404, detail="connection not found")
+    return {"success": True}

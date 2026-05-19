@@ -61,6 +61,30 @@ class ClawRepository:
                 ORDER BY created_at ASC
             """)).mappings().all()]
 
+    def list_display_connections(self) -> list[dict[str, Any]]:
+        """列出用于前端展示的连接记录，同一账号和 workspace 只保留一条。"""
+
+        rows = self.list_connections(include_disconnected=True)
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (
+                str(row.get("user_email") or row.get("id") or "").strip().lower(),
+                str(row.get("workspace_id") or row.get("id") or "").strip().lower(),
+            )
+            current = grouped.get(key)
+            if current is None or self._display_sort_key(row) > self._display_sort_key(current):
+                grouped[key] = row
+        return sorted(grouped.values(), key=lambda item: str(item.get("created_at") or ""))
+
+    @staticmethod
+    def _display_sort_key(connection: dict[str, Any]) -> tuple[int, str, str]:
+        """计算展示连接的优先级，优先展示未断开的非 legacy 新记录。"""
+
+        active_score = 1 if connection.get("status") != "disconnected" else 0
+        canonical_score = 1 if connection.get("id") != LEGACY_CONNECTION_ID else 0
+        updated_at = str(connection.get("updated_at") or connection.get("created_at") or "")
+        return active_score, canonical_score, updated_at
+
     def get_connection(self, connection_id: str) -> dict[str, Any] | None:
         """按连接 ID 读取 Claw 连接。"""
 
@@ -137,6 +161,50 @@ class ClawRepository:
                 SET status = 'disconnected', updated_at = CURRENT_TIMESTAMP
                 WHERE id = :id
             """), {"id": connection_id})
+
+    def delete_connection(self, connection_id: str) -> bool:
+        """删除指定 Claw 连接本地记录。"""
+
+        with self.engine.begin() as connection:
+            result = connection.execute(text("DELETE FROM connections WHERE id = :id"), {"id": connection_id})
+        return result.rowcount > 0
+
+    def mark_duplicate_identity_disconnected(
+        self,
+        user_email: str | None,
+        workspace_id: str | None,
+        keep_connection_id: str,
+    ) -> list[str]:
+        """断开同一账号和 workspace 下除当前连接外的旧连接。"""
+
+        if not user_email or not workspace_id:
+            return []
+        with self.engine.begin() as connection:
+            rows = connection.execute(text("""
+                SELECT id FROM connections
+                WHERE lower(coalesce(user_email, '')) = lower(:user_email)
+                  AND workspace_id = :workspace_id
+                  AND id != :keep_connection_id
+                  AND status != 'disconnected'
+            """), {
+                "user_email": user_email,
+                "workspace_id": workspace_id,
+                "keep_connection_id": keep_connection_id,
+            }).mappings().all()
+            duplicate_ids = [str(row["id"]) for row in rows]
+            if duplicate_ids:
+                connection.execute(text("""
+                    UPDATE connections
+                    SET status = 'disconnected', updated_at = CURRENT_TIMESTAMP
+                    WHERE lower(coalesce(user_email, '')) = lower(:user_email)
+                      AND workspace_id = :workspace_id
+                      AND id != :keep_connection_id
+                """), {
+                    "user_email": user_email,
+                    "workspace_id": workspace_id,
+                    "keep_connection_id": keep_connection_id,
+                })
+        return duplicate_ids
 
     def fallback_connection(self) -> dict[str, Any] | None:
         """从旧 app_settings 或环境变量恢复 legacy Claw 连接。"""

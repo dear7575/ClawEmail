@@ -19,6 +19,7 @@ import {
     createMailbox,
     deleteDuckAccount,
     deleteDuckAddress,
+    deleteConnection,
     deleteMailbox,
     disconnectConnection,
     type DuckAccount,
@@ -774,6 +775,35 @@ export function App() {
             await disconnectConnection(connectionId);
             showStatus(t("flash.claw.severed"));
             await loadConnections();
+            loadListeners();
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setClawBusy(false);
+        }
+    }
+
+    async function handleDeleteConnection(connection: ClawAuthStatus) {
+        if (!connection.id) return;
+        const label = connection.label ?? connection.userEmail ?? connection.workspaceName ?? connection.id;
+        if (!confirm(`删除连接 ${label}？这只会删除本地连接记录和缓存，不会注销 Claw 账号。`)) return;
+        const selectedMailboxBelongsToConnection = activeMailboxes.some((mailbox) => (
+            mailbox.email === selectedMailbox && mailbox.connection_id === connection.id
+        ));
+        setClawBusy(true);
+        try {
+            await deleteConnection(connection.id);
+            showStatus(`连接已删除 · ${label}`);
+            if (selectedConnectionId === connection.id) {
+                setSelectedConnectionId("");
+            }
+            if (selectedMailboxBelongsToConnection) {
+                setSelectedMailbox("");
+                setSelectedMail(null);
+            }
+            await loadConnections();
+            await loadMailboxes();
+            await loadMails(selectedMailboxBelongsToConnection ? "" : selectedMailbox, false);
             loadListeners();
         } catch (err) {
             reportError(err);
@@ -1547,6 +1577,12 @@ export function App() {
                                                 onClick={() => connection.id && handleDisconnectConnection(connection.id)}
                                                 disabled={clawBusy || !connection.id || connection.status === "disconnected"}>断开
                                         </button>
+                                        {!connection.connected && (
+                                            <button className="danger"
+                                                    onClick={() => handleDeleteConnection(connection)}
+                                                    disabled={clawBusy || !connection.id}>删除
+                                            </button>
+                                        )}
                                     </div>
                                 </article>
                             ))}
@@ -1677,7 +1713,7 @@ export function App() {
                                         </div>
                                     ) : visibleDuckAddresses.map((item) => (
                                         <div className="duck-row" key={item.id}>
-                                            <div className="email-cell">
+                                            <div className="email-cell" data-label="Duck 邮箱">
                                                 <button
                                                     type="button"
                                                     className="email-copy-button"
@@ -1692,8 +1728,8 @@ export function App() {
                                                     ) : null}
                                                 </button>
                                             </div>
-                                            <span className="time-cell">{item.forwarding_mailbox_email ?? "—"}</span>
-                                            <div className="password-cell">
+                                            <span className="time-cell" data-label="目标邮箱">{item.forwarding_mailbox_email ?? "—"}</span>
+                                            <div className="password-cell" data-label="OpenAI 密码">
                                                 {item.has_openai_password ? (
                                                     <button
                                                         type="button"
@@ -1712,12 +1748,13 @@ export function App() {
                                             </div>
                                             <span
                                                 className={`dot auth-status-dot ${item.has_openai_auth_json ? "live" : ""}`}
+                                                data-label="授权状态"
                                                 title={item.has_openai_auth_json ? "授权已保存" : "未授权"}
                                                 aria-label={item.has_openai_auth_json ? "授权已保存" : "未授权"}
                                             />
-                                            <span className="time-cell">{item.note ?? "—"}</span>
-                                            <span className="time-cell">{formatServerTime(item.created_at)}</span>
-                                            <div className="ops">
+                                            <span className="time-cell" data-label="备注">{item.note ?? "—"}</span>
+                                            <span className="time-cell" data-label="创建于">{formatServerTime(item.created_at)}</span>
+                                            <div className="ops" data-label="操作">
                                                 <button
                                                     className={`icon-btn ${item.is_sub2_pushed ? "success" : ""}`}
                                                     onClick={() => handlePushOpenAiDuckAddressToSub2(item)}

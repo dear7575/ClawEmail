@@ -229,6 +229,28 @@ Authorization: Bearer <DDG_TOKEN>
 
 Sub2API 地址可以填写根地址，例如 `https://sub2.example.com`，也可以填写完整 `/api/v1/admin/accounts/data` 导入地址。Admin API Key 会按 Sub2API 约定放到 `x-api-key` 请求头；如果配置值以 `Bearer ` 开头，则按 JWT 令牌放到 `Authorization` 请求头。
 
+## 5.3 OpenAI 手机号注册测试流程
+
+该流程仅用于测试 OpenAI 手机号注册链路，不作为当前正式自动化注册能力。测试目标是从手机号入口直接完成注册/登录合并流程，而不是先用邮箱注册后再处理 `add-phone` 补手机号分支。
+
+预期测试路径：
+
+1. 打开 `https://auth.openai.com/log-in?usernameKind=phone_number`。
+2. 通过 `https://hero-sms.com/stubs/handler_api.php` 获取临时手机号；`.env` 中使用 `HERO_SMS_API_KEY` 保存 HeroSMS API Key，代码和日志不得输出明文 Key。
+3. HeroSMS 使用 SMS-Activate 兼容接口；OpenAI 服务 code 为 `dr`。当前测试可优先使用英国号码，HeroSMS country 为 `16`，OpenAI 页面国家码选择 `GB` / `+44`，输入手机号时去掉 `44` 国家码，只填本地号码。
+4. 在 OpenAI 手机号入口提交号码后，进入密码页。该链路用于测试时把该步骤视为“创建/提交测试密码”步骤，测试密码可先使用 `6174`。
+5. 提交密码后，如果进入短信验证码页，则轮询 HeroSMS `getStatusV2` 获取验证码，收到验证码后回填 OpenAI 页面。
+6. 验证成功后继续沿用现有 OpenAI 授权 JSON 保存和 Sub2API 推送流程；下游仍需确认授权 JSON 是否包含 `email`，否则当前 `convert_openai_oauth_to_sub2` 会拒绝转换。
+
+HeroSMS 激活单处理规则：
+
+- 成功收到验证码并完成验证后，调用 `setStatus&id=<activationId>&status=6` 标记完成。
+- 未进入短信验证码页、流程失败或放弃测试时，调用 `setStatus&id=<activationId>&status=8` 取消激活。
+- 若 HeroSMS 返回 `EARLY_CANCEL_DENIED`，需要等待最小激活时间后重试取消，避免号码长期占用。
+- 测试过程不得在文档、日志或前端界面展示完整手机号；只保留 `activationId`、国家、服务 code 和脱敏号码用于排查。
+
+2026-05-15 的手工验证记录：OpenAI 登录页存在“使用电话号码继续”入口，提交英国 HeroSMS 号码后会进入 `/log-in/password`。测试提交 `6174` 时页面返回 `Incorrect phone number or password`，未进入短信验证码页；相关 HeroSMS 激活单已取消，余额恢复。后续如果继续测试，应按上面的流程重新取号并重点确认密码提交后的短信验证码页是否出现。
+
 ## 6. 监听器与重连
 
 `backend/app/services/listeners.py` 维护邮箱监听状态快照，`backend/app/services/sse.py` 提供 SSE 广播总线。

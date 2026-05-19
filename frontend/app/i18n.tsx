@@ -185,7 +185,7 @@ const EN: Dict = {
   "lis.empty.busy": "scanning…",
   "lis.empty.idle": "no listeners.",
   "lis.empty.body":
-    "No WebSocket listeners running. They start automatically once Claw is bound.",
+    "No listener status yet. Bind Claw or sync mailboxes to show per-mailbox listener snapshots.",
   "lis.field.started": "started",
   "lis.field.lastEvt": "last evt",
   "lis.field.error": "error",
@@ -388,7 +388,7 @@ const ZH: Dict = {
   "lis.empty.busy": "扫描中…",
   "lis.empty.idle": "暂无监听器。",
   "lis.empty.body":
-    "尚无运行中的 WebSocket 监听器。绑定 Claw 后将自动为每个邮箱建立监听。",
+    "暂无监听状态。绑定 Claw 或同步邮箱后会显示每个邮箱的监听快照。",
   "lis.field.started": "启动",
   "lis.field.lastEvt": "最近事件",
   "lis.field.error": "错误",

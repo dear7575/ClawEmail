@@ -3335,6 +3335,7 @@ a:hover {
 
     .mb-row,
     .duck-row {
+        min-width: 0;
         gap: 10px;
         align-items: stretch;
         border: 1px solid var(--border);
@@ -3346,6 +3347,90 @@ a:hover {
 
     .mb-row:last-child {
         border-bottom: 1px solid var(--border);
+    }
+
+    .duck-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+
+    .duck-row > :not(.ops):not(.auth-status-dot) {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 82px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--border-soft);
+        padding: 10px 12px;
+    }
+
+    .duck-row > :not(.ops):not(.auth-status-dot)::before,
+    .duck-row > .ops::before,
+    .duck-row > .auth-status-dot::before {
+        content: attr(data-label);
+        color: var(--muted-foreground);
+        font-size: 11px;
+        font-weight: 850;
+    }
+
+    .duck-row .email-copy-button,
+    .duck-row .password-copy-button {
+        min-width: 0;
+    }
+
+    .duck-row .email-cell .e,
+    .duck-row .time-cell,
+    .duck-row .password-cell .mono {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .duck-row .auth-status-dot {
+        width: auto;
+        height: auto;
+        display: grid;
+        grid-template-columns: 82px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--border-soft);
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        animation: none;
+        padding: 10px 12px;
+    }
+
+    .duck-row .auth-status-dot::after {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--text-4);
+    }
+
+    .duck-row .auth-status-dot.live::after {
+        background: var(--success);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 16%, transparent);
+    }
+
+    .duck-row > .ops {
+        display: grid;
+        grid-template-columns: 82px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+    }
+
+    .duck-row > .ops button {
+        justify-self: start;
+    }
+
+    .duck-row > .ops button + button {
+        margin-left: 6px;
     }
 
     .ops {
