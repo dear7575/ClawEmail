@@ -20,6 +20,7 @@ type Props = {
   selectedMail: MailDetail | null;
   onSelectMail: (id: number) => void;
   onRefresh: () => void;
+  refreshing?: boolean;
   onCleared: (deleted: number, failed: number, msg: string) => void;
   onDeleted: (id: number, msg: string) => void;
   onReplied: (msg: string) => void;
@@ -65,6 +66,7 @@ export function InboxView({
   selectedMail,
   onSelectMail,
   onRefresh,
+  refreshing = false,
   onCleared,
   onDeleted,
   onReplied,
@@ -177,6 +179,7 @@ export function InboxView({
           onOffsetChange={onOffsetChange}
           onPageSizeChange={onPageSizeChange}
           onRefresh={onRefresh}
+          refreshing={refreshing}
           placeholder="搜索发件人、主题、正文"
         />
         <div className="scroll">

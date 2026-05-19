@@ -13,6 +13,7 @@ type TablePagerProps = {
   onOffsetChange: (value: number) => void;
   onPageSizeChange: (value: PageSizeOption) => void;
   onRefresh?: () => void;
+  refreshing?: boolean;
   disabled?: boolean;
   placeholder: string;
   className?: string;
@@ -31,6 +32,7 @@ const PAGE_SIZE_OPTIONS: PageSizeOption[] = [20, 50, 100];
  * @param onOffsetChange 页码变化回调，传入新的 offset。
  * @param onPageSizeChange 每页条数变化回调。
  * @param onRefresh 刷新当前列表的回调。
+ * @param refreshing 当前列表是否正在刷新。
  * @param disabled 是否禁用分页操作。
  * @param placeholder 搜索框占位文案。
  * @param className 额外样式类名。
@@ -45,6 +47,7 @@ export function TablePager({
   onOffsetChange,
   onPageSizeChange,
   onRefresh,
+  refreshing = false,
   disabled = false,
   placeholder,
   className = ""
@@ -169,11 +172,12 @@ export function TablePager({
         {onRefresh ? (
           <button
             type="button"
-            className="pager-refresh"
+            className={`pager-refresh ${refreshing ? "is-loading" : ""}`.trim()}
             onClick={onRefresh}
-            disabled={disabled}
-            title="刷新"
-            aria-label="刷新"
+            disabled={disabled || refreshing}
+            title={refreshing ? "刷新中" : "刷新"}
+            aria-label={refreshing ? "刷新中" : "刷新"}
+            aria-busy={refreshing}
           >
             <RefreshCw size={14} aria-hidden="true" />
           </button>

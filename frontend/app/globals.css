@@ -1909,6 +1909,10 @@ a:hover {
     background: var(--card-strong);
 }
 
+.pager-refresh.is-loading svg {
+    animation: spin 760ms linear infinite;
+}
+
 .inbox-pager {
     border-width: 0 0 1px;
     border-radius: 0;

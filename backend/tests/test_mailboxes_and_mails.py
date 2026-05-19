@@ -38,8 +38,11 @@ class FakeDashboard:
 class FakeMailClient:
     def __init__(self) -> None:
         self.deleted_mails: list[tuple[str, str, str | None]] = []
+        self.delete_error: Exception | None = None
 
     def delete_mail(self, mailbox_email: str, provider_mail_id: str, connection_id: str | None = None) -> None:
+        if self.delete_error:
+            raise self.delete_error
         self.deleted_mails.append((mailbox_email, provider_mail_id, connection_id))
 
 
@@ -233,6 +236,28 @@ def test_clear_mails_deletes_filtered_remote_and_local_rows(tmp_path, monkeypatc
     assert response.json() == {"success": True, "deleted": 1, "failed": 0, "errors": []}
     assert client.get("/api/mails").json()["count"] == 1
     assert fake_mail_client.deleted_mails == [("one@claw.163.com", "remote-1", "legacy")]
+
+
+def test_clear_mails_keeps_local_delete_when_remote_connection_missing(tmp_path, monkeypatch, test_client) -> None:
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    fake_mail_client = FakeMailClient()
+    fake_mail_client.delete_error = ValueError("CLAW_API_KEY is required for mail operations; connect Claw first")
+    import app.api.mails as mails_api_module
+
+    mails_api_module.mail_service.mail_client = fake_mail_client
+    repository.save_mail({
+        "connection_id": "missing-connection",
+        "provider_mail_id": "remote-1",
+        "mailbox_email": "gone@claw.163.com",
+        "raw_json": "{}",
+    })
+    client = test_client
+
+    response = client.delete("/api/mails?mailbox=gone@claw.163.com")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "deleted": 1, "failed": 0, "errors": []}
+    assert client.get("/api/mails").json()["count"] == 0
 
 
 def test_create_mailbox_registers_listener_snapshot(tmp_path, monkeypatch, test_client) -> None:

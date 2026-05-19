@@ -72,18 +72,19 @@ type ToastItem = {
     type: "success" | "error";
     message: string;
 };
-type ListenerStatusRefreshInterval = "manual" | "30" | "60" | "300";
+type RefreshInterval = "manual" | "30" | "60" | "300";
 
 const VIEW_STORAGE_KEY = "claw.currentView";
 const LISTENER_RECONNECT_NOTICE_STORAGE_KEY = "claw.listener.reconnectNotice";
 const INBOX_AUTO_REFRESH_STORAGE_KEY = "claw.inbox.autoRefresh";
+const INBOX_SYNC_REFRESH_STORAGE_KEY = "claw.inbox.syncRefresh";
 const LISTENER_STATUS_REFRESH_STORAGE_KEY = "claw.listener.statusRefresh";
 const LIVE_LISTENER_STATUSES = new Set(["running", "open"]);
 const CLAW_LOGIN_NAME_PATTERN = /^[^\s@]+$/;
 const CLAW_LOGIN_DOMAIN = "@163.com";
 const ALL_SELECT_VALUE = "__all";
 const DEFAULT_LIST_PAGE_SIZE: PageSizeOption = 20;
-const LISTENER_STATUS_REFRESH_MS: Record<ListenerStatusRefreshInterval, number | null> = {
+const REFRESH_INTERVAL_MS: Record<RefreshInterval, number | null> = {
     manual: null,
     "30": 30_000,
     "60": 60_000,
@@ -130,9 +131,9 @@ function readBooleanPreference(key: string, fallback: boolean): boolean {
     return fallback;
 }
 
-function readListenerStatusRefreshInterval(): ListenerStatusRefreshInterval {
+function readRefreshInterval(key: string): RefreshInterval {
     if (typeof localStorage === "undefined") return "manual";
-    const saved = localStorage.getItem(LISTENER_STATUS_REFRESH_STORAGE_KEY);
+    const saved = localStorage.getItem(key);
     return saved === "30" || saved === "60" || saved === "300" ? saved : "manual";
 }
 
@@ -196,6 +197,7 @@ export function App() {
     const [mailOffset, setMailOffset] = useState(0);
     const [mailPageSize, setMailPageSize] = useState<PageSizeOption>(DEFAULT_LIST_PAGE_SIZE);
     const [mailKeyword, setMailKeyword] = useState("");
+    const [mailRefreshBusy, setMailRefreshBusy] = useState(false);
     const [selectedMail, setSelectedMail] = useState<MailDetail | null>(null);
     const [duckAccounts, setDuckAccounts] = useState<DuckAccount[]>([]);
     const [duckAddresses, setDuckAddresses] = useState<DuckAddress[]>([]);
@@ -235,8 +237,10 @@ export function App() {
     const [inboxAutoRefresh, setInboxAutoRefresh] = useState(() => (
         readBooleanPreference(INBOX_AUTO_REFRESH_STORAGE_KEY, true)
     ));
+    const [inboxSyncRefreshInterval, setInboxSyncRefreshInterval] =
+        useState<RefreshInterval>(() => readRefreshInterval(INBOX_SYNC_REFRESH_STORAGE_KEY));
     const [listenerStatusRefreshInterval, setListenerStatusRefreshInterval] =
-        useState<ListenerStatusRefreshInterval>(readListenerStatusRefreshInterval);
+        useState<RefreshInterval>(() => readRefreshInterval(LISTENER_STATUS_REFRESH_STORAGE_KEY));
     const [serverListenerSettings, setServerListenerSettings] = useState<ListenerSettings>({
         logMode: "quiet",
         reconnectMode: "standard"
@@ -463,6 +467,18 @@ export function App() {
         }
     }
 
+    async function handleRefreshMails() {
+        if (mailRefreshBusy) return;
+        setMailRefreshBusy(true);
+        try {
+            await loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox));
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setMailRefreshBusy(false);
+        }
+    }
+
     async function loadMail(id: number) {
         const detail = await fetchMail(id);
         setSelectedMail(detail);
@@ -539,6 +555,10 @@ export function App() {
     }, [inboxAutoRefresh]);
 
     useEffect(() => {
+        localStorage.setItem(INBOX_SYNC_REFRESH_STORAGE_KEY, inboxSyncRefreshInterval);
+    }, [inboxSyncRefreshInterval]);
+
+    useEffect(() => {
         localStorage.setItem(LISTENER_STATUS_REFRESH_STORAGE_KEY, listenerStatusRefreshInterval);
     }, [listenerStatusRefreshInterval]);
 
@@ -589,13 +609,23 @@ export function App() {
 
     useEffect(() => {
         if (!password) return;
-        const intervalMs = LISTENER_STATUS_REFRESH_MS[ listenerStatusRefreshInterval ];
+        const intervalMs = REFRESH_INTERVAL_MS[ listenerStatusRefreshInterval ];
         if (!intervalMs) return;
         const timer = window.setInterval(() => {
             loadListeners();
         }, intervalMs);
         return () => window.clearInterval(timer);
     }, [password, listenerStatusRefreshInterval, selectedConnection?.id]);
+
+    useEffect(() => {
+        if (!password || view !== "inbox") return;
+        const intervalMs = REFRESH_INTERVAL_MS[ inboxSyncRefreshInterval ];
+        if (!intervalMs) return;
+        const timer = window.setInterval(() => {
+            loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError);
+        }, intervalMs);
+        return () => window.clearInterval(timer);
+    }, [password, view, inboxSyncRefreshInterval, selectedConnection?.id, selectedMailbox, mailOffset, mailPageSize, mailKeyword]);
 
     useEffect(() => {
         if (!password) return;
@@ -1809,7 +1839,8 @@ export function App() {
                         onPageSizeChange={setMailPageSize}
                         selectedMail={selectedMail}
                         onSelectMail={(id) => loadMail(id).catch(reportError)}
-                        onRefresh={() => loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError)}
+                        onRefresh={handleRefreshMails}
+                        refreshing={mailRefreshBusy}
                         onCleared={(deleted, failed, msg) => {
                             if (deleted > 0) {
                                 setMails([]);
@@ -2005,12 +2036,32 @@ export function App() {
                             </label>
                             <div className="setting-row">
                                 <span>
+                                    <strong>收件定时刷新</strong>
+                                    <small>收件管理页面打开时，按固定频率同步当前邮箱的远端收件箱。</small>
+                                </span>
+                                <Select
+                                    value={inboxSyncRefreshInterval}
+                                    onValueChange={(value) => setInboxSyncRefreshInterval(value as RefreshInterval)}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="刷新频率"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="manual">仅手动</SelectItem>
+                                        <SelectItem value="30">30 秒</SelectItem>
+                                        <SelectItem value="60">60 秒</SelectItem>
+                                        <SelectItem value="300">5 分钟</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="setting-row">
+                                <span>
                                     <strong>监听状态刷新</strong>
                                     <small>控制连接管理里监听状态的自动刷新频率。</small>
                                 </span>
                                 <Select
                                     value={listenerStatusRefreshInterval}
-                                    onValueChange={(value) => setListenerStatusRefreshInterval(value as ListenerStatusRefreshInterval)}
+                                    onValueChange={(value) => setListenerStatusRefreshInterval(value as RefreshInterval)}
                                 >
                                     <SelectTrigger className="toolbar-select">
                                         <SelectValue placeholder="刷新频率"/>

@@ -105,6 +105,12 @@ class MailService:
         """
 
         normalized_mailbox = mailbox_email.strip().lower()
+        if not connection_id:
+            mailbox = self.repository.get_mailbox_by_email(normalized_mailbox)
+            connection_id = mailbox.get("connection_id") if mailbox else None
+        if not self.mail_client.repository.resolve_connection(connection_id):
+            logger.warning("跳过无可用 Claw 连接的邮箱收件箱同步：connection=%s mailbox=%s", connection_id or "legacy", normalized_mailbox)
+            return
         logger.info("开始同步邮箱收件箱：connection=%s mailbox=%s", connection_id or "legacy", normalized_mailbox)
         remote_ids = self.mail_client.list_inbox_message_ids(
             normalized_mailbox,
@@ -145,7 +151,11 @@ class MailService:
         mailboxes = self.repository.list_active_mailboxes(connection_id)
         logger.info("开始同步全部邮箱收件箱：connection=%s mailboxCount=%s", connection_id or "all", len(mailboxes))
         for mailbox in mailboxes:
-            self.sync_mailbox_inbox(mailbox.get("connection_id") or connection_id, mailbox["email"])
+            resolved_connection_id = mailbox.get("connection_id") or connection_id
+            if not resolved_connection_id:
+                logger.warning("跳过未绑定连接的邮箱收件箱同步：mailbox=%s", mailbox["email"])
+                continue
+            self.sync_mailbox_inbox(resolved_connection_id, mailbox["email"])
         logger.info("全部邮箱收件箱同步完成：connection=%s mailboxCount=%s", connection_id or "all", len(mailboxes))
 
     def list_with_optional_sync(
@@ -210,26 +220,20 @@ class MailService:
         for mail in mails:
             try:
                 self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
-                if self.repository.delete_mail(mail["id"]):
-                    deleted += 1
             except Exception as exc:
-                logger.error(
-                    "批量删除邮件失败：mailId=%s mailbox=%s providerMailId=%s error=%s",
+                logger.warning(
+                    "远端删除邮件失败，继续删除本地缓存：mailId=%s mailbox=%s providerMailId=%s error=%s",
                     mail["id"],
                     mail["mailbox_email"],
                     mail["provider_mail_id"],
                     exc,
                 )
-                errors.append({
-                    "id": mail["id"],
-                    "mailboxEmail": mail["mailbox_email"],
-                    "providerMailId": mail["provider_mail_id"],
-                    "error": str(exc),
-                })
+            if self.repository.delete_mail(mail["id"]):
+                deleted += 1
         result = {
-            "success": not errors,
+            "success": True,
             "deleted": deleted,
-            "failed": len(errors),
+            "failed": 0,
             "errors": errors,
         }
         logger.info(
