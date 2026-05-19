@@ -19,7 +19,7 @@ frontend/
     App.tsx              主界面：登录、邮箱、邮件、Duck、Sub2、通知、设置
     api.ts               前端调用层（统一 X-Admin-Password / ?token=）
     components/          收件箱、邮箱、弹窗等页面组件
-  next.config.mjs        /api/* 与 /health 转发到 FastAPI
+  next.config.mjs        /api/* 转发到 FastAPI
 scripts/
   docker-entrypoint.sh   Docker 单镜像启动脚本
 ```
@@ -277,7 +277,7 @@ DATABASE_PATH=./data/app.db
 
 ## 8. 本地运行
 
-本地开发需要分别启动 FastAPI 后端和 Next.js 前端。后端默认监听 `127.0.0.1:8000`，前端默认监听 `0.0.0.0:3001`，前端通过 `BACKEND_URL` 将 `/api/*` 和 `/health` 转发到后端。
+本地开发需要分别启动 FastAPI 后端和 Next.js 前端。后端默认监听 `127.0.0.1:8000`，前端默认监听 `0.0.0.0:3001`，前端通过 `BACKEND_URL` 将 `/api/*` 转发到后端；`/health` 由前后端各自本地响应，避免健康检查依赖代理链路。
 
 ```powershell
 cd backend
@@ -337,7 +337,7 @@ DATABASE_PATH=./data/app.db
 当前仓库使用前后端分离结构：
 
 - `backend`：FastAPI 后端，提供 `/api/*`、`/health`、SQLite 数据访问和外部服务集成。
-- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 Next rewrites 转发到后端。
+- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 Next rewrites 转发到后端；前端 `/health` 本地响应，用于容器前端健康检查。
 
 已迁移到 FastAPI 的兼容接口：
 

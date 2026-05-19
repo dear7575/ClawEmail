@@ -48,6 +48,8 @@ RUN mkdir -p /app/data \
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
-  CMD curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/health" >/dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null \
+    && curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/health" >/dev/null \
+    || exit 1
 
 CMD ["/app/scripts/docker-entrypoint.sh"]

@@ -13,6 +13,14 @@ node ./node_modules/next/dist/bin/next start \
   --port "${FRONTEND_PORT:-3000}" &
 frontend_pid=$!
 
+health_interval="${HEALTHCHECK_INTERVAL_SECONDS:-30}"
+health_timeout="${HEALTHCHECK_TIMEOUT_SECONDS:-5}"
+health_retries="${HEALTHCHECK_RETRIES:-3}"
+health_start_period="${HEALTHCHECK_START_PERIOD_SECONDS:-45}"
+health_failures=0
+last_health_check=0
+health_start_after=$(($(date +%s) + health_start_period))
+
 shutdown() {
   # 收到停止信号时同时关闭前后端，避免留下孤儿进程。
   kill "$backend_pid" "$frontend_pid" 2>/dev/null || true
@@ -68,6 +76,47 @@ exit_after_process_stopped() {
   exit "$exit_code"
 }
 
+check_url() {
+  name="$1"
+  url="$2"
+  if curl -fsS --max-time "$health_timeout" "$url" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "$name health check failed: $url" >&2
+  return 1
+}
+
+check_http_health() {
+  now="$(date +%s)"
+  if [ "$now" -lt "$health_start_after" ]; then
+    return 0
+  fi
+  if [ $((now - last_health_check)) -lt "$health_interval" ]; then
+    return 0
+  fi
+
+  last_health_check="$now"
+  backend_url="http://127.0.0.1:${PORT:-8000}/health"
+  frontend_url="http://127.0.0.1:${FRONTEND_PORT:-3000}/health"
+  if check_url "backend" "$backend_url" && check_url "frontend" "$frontend_url"; then
+    if [ "$health_failures" -gt 0 ]; then
+      echo "container health check recovered" >&2
+    fi
+    health_failures=0
+    return 0
+  fi
+
+  health_failures=$((health_failures + 1))
+  echo "container health check failed ($health_failures/$health_retries)" >&2
+  if [ "$health_failures" -ge "$health_retries" ]; then
+    echo "health failure threshold reached, exiting for Docker restart policy" >&2
+    shutdown
+    wait "$backend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+    exit 1
+  fi
+}
+
 trap handle_stop INT TERM
 
 while true; do
@@ -78,6 +127,8 @@ while true; do
   if ! is_process_alive "$frontend_pid"; then
     exit_after_process_stopped "frontend" "$frontend_pid" "$backend_pid"
   fi
+
+  check_http_health
 
   sleep 2
 done
