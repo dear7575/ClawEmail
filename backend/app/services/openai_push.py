@@ -206,6 +206,11 @@ class OpenAiPushService:
     ) -> dict[str, Any]:
         """优先使用 Sub2 授权登录推送，遇到手机号步骤时降级为 OAuth token 推送。"""
 
+        settings = sub2_service.get_settings()
+        if not settings.open_ai_auth_login_enabled:
+            logger.info("Sub2 授权登录分支已关闭，改用 OAuth token 推送：email=%s", login.token.get("email"))
+            fallback = sub2_service.push_data(data, group_id)
+            return {**fallback, "pushMode": "oauth_token"}
         try:
             logger.info("开始 Sub2 授权登录分支推送：email=%s", login.token.get("email"))
             result = sub2_service.push_data_via_auth_login(

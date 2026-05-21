@@ -340,3 +340,50 @@ def test_openai_duck_push_falls_back_to_oauth_token_on_add_phone(tmp_path, monke
     assert calls[1]["url"] == "https://sub2.example.com/api/v1/admin/openai/generate-auth-url"
     assert calls[2]["url"] == "https://sub2.example.com/api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc"
     assert calls[3]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+
+
+def test_openai_duck_push_skips_sub2_auth_login_when_disabled(tmp_path, monkeypatch, test_client) -> None:
+    responses = [
+        httpx.Response(200, json={"data": {"items": [{
+            "id": 5,
+            "name": "proxy-5",
+            "protocol": "http",
+            "host": "127.0.0.1",
+            "port": 7890,
+            "username": "",
+            "password": "",
+        }]}}),
+        httpx.Response(200, json={"code": 0, "data": {"id": 100}}),
+    ]
+    repository, settings, mail_repository, auth_service, calls = reset_openai_push_service(tmp_path, monkeypatch, responses)
+    settings.set("sub2.apiUrl", "https://sub2.example.com")
+    settings.set("sub2.apiKey", "adminkey")
+    settings.set("sub2.defaultGroupId", "9")
+    settings.set("sub2.openAiAuthLoginEnabled", "false")
+    repository.create_account("duck:1", "main", "token")
+    create_mailbox(mail_repository)
+    address = repository.save_address({
+        "account_id": "duck:1",
+        "address": "private@duck.com",
+        "local_part": "private",
+        "forwarding_mailbox_email": "root@claw.163.com",
+        "note": None,
+        "raw_json": "{}",
+    })
+
+    response = test_client.post("/api/openai/duck-push-sub2", json={"duckAddressId": address["id"]})
+
+    assert response.status_code == 200
+    started = response.json()
+    assert started["success"] is True
+    body = wait_openai_duck_push_job(test_client, started["jobId"])["result"]
+    assert body["success"] is True
+    assert body["pushMode"] == "oauth_token"
+    assert auth_service.login_calls
+    assert auth_service.extract_calls == []
+    assert len(calls) == 2
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc"
+    assert calls[1]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+    saved_address = repository.get_address(address["id"])
+    assert saved_address is not None
+    assert saved_address["sub2_push_mode"] == "oauth_token"

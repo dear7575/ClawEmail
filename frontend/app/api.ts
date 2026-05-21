@@ -125,6 +125,7 @@ export type Sub2Settings = {
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   defaultGroupId: number | null;
+  openAiAuthLoginEnabled: boolean;
 };
 
 export type Sub2Group = {
@@ -519,6 +520,7 @@ export async function updateSub2Settings(input: {
   apiUrl?: string;
   apiKey?: string;
   defaultGroupId?: number | null;
+  openAiAuthLoginEnabled?: boolean;
 }): Promise<Sub2Settings> {
   return requestJson<Sub2Settings>("/api/sub2/settings", {
     method: "PUT",
@@ -546,22 +548,31 @@ export async function pushSub2Account(input: unknown, groupId: number): Promise<
   });
 }
 
-export async function pushOpenAiDuckAddressToSub2(duckAddressId: number, groupId?: number | null): Promise<Sub2PushResult & { email?: string }> {
+export async function pushOpenAiDuckAddressToSub2(
+  duckAddressId: number,
+  groupId?: number | null,
+  options?: { onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void> }
+): Promise<Sub2PushResult & { email?: string }> {
   const started = await requestJson<OpenAiDuckPushJobStatus>("/api/openai/duck-push-sub2", {
     method: "POST",
     body: JSON.stringify({ duckAddressId, groupId })
   });
-  return waitForOpenAiDuckPushJob(started.jobId);
+  await options?.onPoll?.(started);
+  return waitForOpenAiDuckPushJob(started.jobId, options);
 }
 
 export async function fetchOpenAiDuckPushJob(jobId: string): Promise<OpenAiDuckPushJobStatus> {
   return requestJson<OpenAiDuckPushJobStatus>(`/api/openai/duck-push-sub2/jobs/${encodeURIComponent(jobId)}`);
 }
 
-async function waitForOpenAiDuckPushJob(jobId: string): Promise<Sub2PushResult & { email?: string }> {
+async function waitForOpenAiDuckPushJob(
+  jobId: string,
+  options?: { onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void> }
+): Promise<Sub2PushResult & { email?: string }> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     const job = await fetchOpenAiDuckPushJob(jobId);
+    await options?.onPoll?.(job);
     if (job.status === "succeeded" && job.result) return job.result;
     if (job.status === "failed") throw new Error(job.error || "OpenAI Duck 推送失败");
     await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 API_URL_KEY = "sub2.apiUrl"
 API_KEY_KEY = "sub2.apiKey"
 DEFAULT_GROUP_ID_KEY = "sub2.defaultGroupId"
+OPENAI_AUTH_LOGIN_ENABLED_KEY = "sub2.openAiAuthLoginEnabled"
 
 
 class Sub2Settings(BaseModel):
@@ -27,6 +28,7 @@ class Sub2Settings(BaseModel):
     api_url: str = Field(default="", alias="apiUrl")
     api_key: str = Field(default="", alias="apiKey")
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    open_ai_auth_login_enabled: bool = Field(default=True, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -38,6 +40,7 @@ class Sub2PublicSettings(BaseModel):
     has_api_key: bool = Field(default=False, alias="hasApiKey")
     api_key_preview: str | None = Field(default=None, alias="apiKeyPreview")
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    open_ai_auth_login_enabled: bool = Field(default=True, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -48,6 +51,7 @@ class Sub2SettingsUpdate(BaseModel):
     api_url: str | None = Field(default=None, alias="apiUrl", max_length=500)
     api_key: str | None = Field(default=None, alias="apiKey", max_length=500)
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    open_ai_auth_login_enabled: bool | None = Field(default=None, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -179,6 +183,19 @@ def parse_optional_group_id(value: str | int | None) -> int | None:
     except ValueError:
         return None
     return int(parsed) if parsed.is_integer() and parsed > 0 else None
+
+
+def parse_bool_setting(value: str | None, default: bool) -> bool:
+    """解析 SQLite 中保存的布尔配置，缺失或非法时使用默认值。"""
+
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _replace_path(parsed, path: str):
@@ -750,6 +767,7 @@ class Sub2Service:
             apiUrl=trim_string(self.repository.get(API_URL_KEY) or settings.sub2_api_url),
             apiKey=trim_string(self.repository.get(API_KEY_KEY) or settings.sub2_api_key),
             defaultGroupId=parse_optional_group_id(self.repository.get(DEFAULT_GROUP_ID_KEY)),
+            openAiAuthLoginEnabled=parse_bool_setting(self.repository.get(OPENAI_AUTH_LOGIN_ENABLED_KEY), True),
         )
 
     def to_public_settings(self, settings: Sub2Settings | None = None) -> Sub2PublicSettings:
@@ -761,6 +779,7 @@ class Sub2Service:
             hasApiKey=bool(current.api_key),
             apiKeyPreview=mask_api_key(current.api_key),
             defaultGroupId=current.default_group_id,
+            openAiAuthLoginEnabled=current.open_ai_auth_login_enabled,
         )
 
     def save_settings(self, update: Sub2SettingsUpdate) -> Sub2PublicSettings:
@@ -780,6 +799,13 @@ class Sub2Service:
             defaultGroupId=current.default_group_id
             if "default_group_id" not in update.model_fields_set
             else update.default_group_id,
+            openAiAuthLoginEnabled=current.open_ai_auth_login_enabled
+            if "open_ai_auth_login_enabled" not in update.model_fields_set
+            else (
+                update.open_ai_auth_login_enabled
+                if update.open_ai_auth_login_enabled is not None
+                else current.open_ai_auth_login_enabled
+            ),
         )
         self.repository.set(API_URL_KEY, next_settings.api_url)
         self.repository.set(API_KEY_KEY, next_settings.api_key)
@@ -787,11 +813,16 @@ class Sub2Service:
             DEFAULT_GROUP_ID_KEY,
             "" if next_settings.default_group_id is None else str(next_settings.default_group_id),
         )
+        self.repository.set(
+            OPENAI_AUTH_LOGIN_ENABLED_KEY,
+            "true" if next_settings.open_ai_auth_login_enabled else "false",
+        )
         logger.info(
-            "保存 Sub2API 配置：apiUrl=%s hasApiKey=%s defaultGroupId=%s",
+            "保存 Sub2API 配置：apiUrl=%s hasApiKey=%s defaultGroupId=%s openAiAuthLoginEnabled=%s",
             next_settings.api_url,
             bool(next_settings.api_key),
             next_settings.default_group_id,
+            next_settings.open_ai_auth_login_enabled,
         )
         return self.to_public_settings(next_settings)
 

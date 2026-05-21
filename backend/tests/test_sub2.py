@@ -71,6 +71,7 @@ def test_get_sub2_settings_returns_defaults(tmp_path, monkeypatch, test_client) 
         "hasApiKey": False,
         "apiKeyPreview": None,
         "defaultGroupId": None,
+        "openAiAuthLoginEnabled": True,
     }
 
 
@@ -82,6 +83,7 @@ def test_put_sub2_settings_persists_compatible_keys(tmp_path, monkeypatch, test_
         "apiUrl": " https://sub2.example.com ",
         "apiKey": " 1234567890abcdef ",
         "defaultGroupId": 12,
+        "openAiAuthLoginEnabled": False,
     })
 
     assert response.status_code == 200
@@ -90,10 +92,12 @@ def test_put_sub2_settings_persists_compatible_keys(tmp_path, monkeypatch, test_
         "hasApiKey": True,
         "apiKeyPreview": "12345678...cdef",
         "defaultGroupId": 12,
+        "openAiAuthLoginEnabled": False,
     }
     assert repository.get("sub2.apiUrl") == "https://sub2.example.com"
     assert repository.get("sub2.apiKey") == "1234567890abcdef"
     assert repository.get("sub2.defaultGroupId") == "12"
+    assert repository.get("sub2.openAiAuthLoginEnabled") == "false"
 
 
 def test_put_sub2_settings_preserves_api_key_when_omitted(tmp_path, monkeypatch, test_client) -> None:
@@ -110,6 +114,7 @@ def test_put_sub2_settings_preserves_api_key_when_omitted(tmp_path, monkeypatch,
     assert response.json()["hasApiKey"] is True
     assert response.json()["apiKeyPreview"] == "secr****"
     assert response.json()["defaultGroupId"] == 9
+    assert response.json()["openAiAuthLoginEnabled"] is True
     assert repository.get("sub2.apiKey") == "secret-token"
     assert repository.get("sub2.defaultGroupId") == "9"
 

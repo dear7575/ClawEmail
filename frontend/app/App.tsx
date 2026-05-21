@@ -79,6 +79,7 @@ const LISTENER_RECONNECT_NOTICE_STORAGE_KEY = "claw.listener.reconnectNotice";
 const INBOX_AUTO_REFRESH_STORAGE_KEY = "claw.inbox.autoRefresh";
 const INBOX_SYNC_REFRESH_STORAGE_KEY = "claw.inbox.syncRefresh";
 const LISTENER_STATUS_REFRESH_STORAGE_KEY = "claw.listener.statusRefresh";
+const DUCK_ADDRESS_REFRESH_STORAGE_KEY = "claw.duck.addressRefresh";
 const LIVE_LISTENER_STATUSES = new Set(["running", "open"]);
 const CLAW_LOGIN_NAME_PATTERN = /^[^\s@]+$/;
 const CLAW_LOGIN_DOMAIN = "@163.com";
@@ -241,6 +242,8 @@ export function App() {
         useState<RefreshInterval>(() => readRefreshInterval(INBOX_SYNC_REFRESH_STORAGE_KEY));
     const [listenerStatusRefreshInterval, setListenerStatusRefreshInterval] =
         useState<RefreshInterval>(() => readRefreshInterval(LISTENER_STATUS_REFRESH_STORAGE_KEY));
+    const [duckAddressRefreshInterval, setDuckAddressRefreshInterval] =
+        useState<RefreshInterval>(() => readRefreshInterval(DUCK_ADDRESS_REFRESH_STORAGE_KEY));
     const [serverListenerSettings, setServerListenerSettings] = useState<ListenerSettings>({
         logMode: "quiet",
         reconnectMode: "standard"
@@ -258,13 +261,15 @@ export function App() {
         apiUrl: "",
         hasApiKey: false,
         apiKeyPreview: null,
-        defaultGroupId: null
+        defaultGroupId: null,
+        openAiAuthLoginEnabled: true
     });
     const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
     const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
     const [telegramChatIdInput, setTelegramChatIdInput] = useState("");
     const [sub2ApiUrlInput, setSub2ApiUrlInput] = useState("");
     const [sub2ApiKeyInput, setSub2ApiKeyInput] = useState("");
+    const [sub2OpenAiAuthLoginEnabledInput, setSub2OpenAiAuthLoginEnabledInput] = useState(true);
     const [settingsBusy, setSettingsBusy] = useState(false);
     const [telegramMessage, setTelegramMessage] = useState("");
     const [telegramSendBusy, setTelegramSendBusy] = useState(false);
@@ -563,6 +568,10 @@ export function App() {
     }, [listenerStatusRefreshInterval]);
 
     useEffect(() => {
+        localStorage.setItem(DUCK_ADDRESS_REFRESH_STORAGE_KEY, duckAddressRefreshInterval);
+    }, [duckAddressRefreshInterval]);
+
+    useEffect(() => {
         if (!password) return;
         setAdminPassword(password);
         loadConnections().catch(reportError);
@@ -636,6 +645,24 @@ export function App() {
         if (!password || view !== "duck") return;
         loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
     }, [password, view, selectedDuckAccount?.id, duckAddressOffset, duckAddressPageSize, duckAddressKeyword]);
+
+    useEffect(() => {
+        if (!password || view !== "duck") return;
+        const intervalMs = REFRESH_INTERVAL_MS[ duckAddressRefreshInterval ];
+        if (!intervalMs) return;
+        const timer = window.setInterval(() => {
+            loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
+        }, intervalMs);
+        return () => window.clearInterval(timer);
+    }, [
+        password,
+        view,
+        duckAddressRefreshInterval,
+        selectedDuckAccount?.id,
+        duckAddressOffset,
+        duckAddressPageSize,
+        duckAddressKeyword
+    ]);
 
     useEffect(() => {
         if (!password || view !== "accountPush") return;
@@ -892,7 +919,8 @@ export function App() {
                 updateSub2Settings({
                     apiUrl: sub2ApiUrlInput.trim(),
                     apiKey: sub2ApiKeyInput.trim() || undefined,
-                    defaultGroupId: sub2DefaultGroupIdInput ? Number(sub2DefaultGroupIdInput) : null
+                    defaultGroupId: sub2DefaultGroupIdInput ? Number(sub2DefaultGroupIdInput) : null,
+                    openAiAuthLoginEnabled: sub2OpenAiAuthLoginEnabledInput
                 })
             ]);
             setServerListenerSettings(listenerSaved);
@@ -933,6 +961,7 @@ export function App() {
         setSub2ApiUrlInput(settings.apiUrl);
         setSub2ApiKeyInput("");
         setSub2DefaultGroupIdInput(settings.defaultGroupId ? String(settings.defaultGroupId) : "");
+        setSub2OpenAiAuthLoginEnabledInput(settings.openAiAuthLoginEnabled);
     }
 
     async function loadSub2Settings() {
@@ -1017,7 +1046,12 @@ export function App() {
         }
         setOpenAiPushBusyDuckAddressId(address.id);
         try {
-            const result = await pushOpenAiDuckAddressToSub2(address.id, sub2Settings.defaultGroupId);
+            const refreshDuckAddresses = async () => {
+                await loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
+            };
+            const result = await pushOpenAiDuckAddressToSub2(address.id, sub2Settings.defaultGroupId, {
+                onPoll: refreshDuckAddresses
+            });
             await loadDuckAddresses(selectedDuckAccount?.id);
             const modeText = result.pushMode === "sub2_auth"
                 ? "Sub2 授权创建"
@@ -2076,6 +2110,26 @@ export function App() {
                             </div>
                             <div className="setting-row">
                                 <span>
+                                    <strong>Duck 地址状态刷新</strong>
+                                    <small>Duck 邮箱页面打开时，按固定频率刷新推送状态和授权状态。</small>
+                                </span>
+                                <Select
+                                    value={duckAddressRefreshInterval}
+                                    onValueChange={(value) => setDuckAddressRefreshInterval(value as RefreshInterval)}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="刷新频率"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="manual">仅手动</SelectItem>
+                                        <SelectItem value="30">30 秒</SelectItem>
+                                        <SelectItem value="60">60 秒</SelectItem>
+                                        <SelectItem value="300">5 分钟</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="setting-row">
+                                <span>
                                     <strong>服务端控制台日志</strong>
                                     <small>控制后端是否输出监听连接/断开流水。默认静默，只保留真正异常。</small>
                                 </span>
@@ -2254,6 +2308,18 @@ export function App() {
                                     {!sub2GroupsBusy && !sub2Groups.length && <span>暂无可用分组</span>}
                                 </div>
                             </div>
+                            <label className="setting-row">
+                                <span>
+                                    <strong>Sub2 授权登录创建</strong>
+                                    <small>开启后优先走 Sub2 授权登录分支；关闭后自动登录拿到 token 后直接创建账号。</small>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={sub2OpenAiAuthLoginEnabledInput}
+                                    onChange={(event) => setSub2OpenAiAuthLoginEnabledInput(event.target.checked)}
+                                    disabled={settingsBusy}
+                                />
+                            </label>
                             <div className="settings-actions">
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>
                                     {listenerBusy ? "刷新中" : "立即刷新监听状态"}
