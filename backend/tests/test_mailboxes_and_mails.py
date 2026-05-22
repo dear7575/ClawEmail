@@ -1,6 +1,8 @@
 import importlib
 import json
 
+import httpx
+
 from app.main import app
 
 
@@ -44,6 +46,31 @@ class FakeMailClient:
         if self.delete_error:
             raise self.delete_error
         self.deleted_mails.append((mailbox_email, provider_mail_id, connection_id))
+
+
+class FakeConnectionRepository:
+    """测试用连接仓储，确保同步路径会进入远端拉取。"""
+
+    def resolve_connection(self, connection_id: str | None = None) -> dict:
+        """返回可用连接记录。"""
+
+        return {"id": connection_id or "legacy", "api_key": "test-key"}
+
+
+class FailingSyncMailClient:
+    """测试用邮件客户端，模拟 Claw HTTPS 握手失败。"""
+
+    repository = FakeConnectionRepository()
+
+    def list_inbox_message_ids(
+        self,
+        mailbox_email: str,
+        max_messages: int = 500,
+        connection_id: str | None = None,
+    ) -> list[str]:
+        """模拟 httpx 在 TLS 握手阶段抛出的连接错误。"""
+
+        raise httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol")
 
 
 def reset_mail_services(tmp_path, monkeypatch):
@@ -210,6 +237,42 @@ def test_mail_list_supports_pagination_and_keyword(tmp_path, monkeypatch, test_c
     assert len(paged.json()["items"]) == 1
     assert searched.json()["total"] == 1
     assert searched.json()["items"][0]["subject"] == "alpha subject"
+
+
+def test_mail_sync_network_error_returns_local_cache(tmp_path, monkeypatch, test_client) -> None:
+    """远端同步网络失败时返回本地缓存，避免前端代理收到 502/连接重置。"""
+
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    import app.api.mails as mails_api_module
+
+    mails_api_module.mail_service.mail_client = FailingSyncMailClient()
+    repository.upsert_mailbox({
+        "id": "remote-demo",
+        "connection_id": "conn-1",
+        "provider_mailbox_id": "remote-demo",
+        "email": "demo@claw.163.com",
+        "prefix": "demo",
+        "status": "active",
+    })
+    repository.save_mail({
+        "connection_id": "conn-1",
+        "provider_mail_id": "cached-1",
+        "mailbox_email": "demo@claw.163.com",
+        "subject": "cached",
+        "raw_json": "{}",
+    })
+    client = test_client
+
+    response = client.get("/api/mails?limit=20&offset=0&sync=true")
+    health = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert response.json()["items"][0]["subject"] == "cached"
+    assert response.json()["syncErrors"][0]["connectionId"] == "conn-1"
+    assert response.json()["syncErrors"][0]["mailbox"] == "demo@claw.163.com"
+    assert "UNEXPECTED_EOF_WHILE_READING" in response.json()["syncErrors"][0]["error"]
+    assert health.status_code == 200
 
 
 def test_clear_mails_deletes_filtered_remote_and_local_rows(tmp_path, monkeypatch, test_client) -> None:

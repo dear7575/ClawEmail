@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import logging
 
+import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.mail_repository import MailRepository, mail_repository, parse_mail_raw_json
@@ -7,6 +10,7 @@ from app.services.claw_mail import ClawMailClient, claw_mail_client, mail_to_rep
 
 
 logger = logging.getLogger(__name__)
+SYNC_RECOVERABLE_ERRORS = (RuntimeError, httpx.HTTPError, OSError)
 
 
 class SendMailBody(BaseModel):
@@ -64,6 +68,29 @@ class MailService:
 
         self.repository = repository
         self.mail_client = mail_client
+
+    @staticmethod
+    def sync_error_payload(
+        connection_id: str | None,
+        mailbox_email: str,
+        error: Exception,
+    ) -> dict[str, str | None]:
+        """构造前端可读的同步失败信息。
+
+        参数:
+            connection_id: 同步失败的 Claw 连接 ID。
+            mailbox_email: 同步失败的邮箱地址。
+            error: 捕获到的外部同步异常。
+
+        返回:
+            包含连接、邮箱和错误摘要的字典。
+        """
+
+        return {
+            "connectionId": connection_id,
+            "mailbox": mailbox_email,
+            "error": str(error),
+        }
 
     def list(
         self,
@@ -145,18 +172,34 @@ class MailService:
             saved,
         )
 
-    def sync_all_mailbox_inboxes(self, connection_id: str | None = None) -> None:
-        """同步指定连接下所有本地活跃邮箱的收件箱。"""
+    def sync_all_mailbox_inboxes(self, connection_id: str | None = None) -> list[dict[str, str | None]]:
+        """同步指定连接下所有本地活跃邮箱的收件箱，单个邮箱失败不阻断整体列表。"""
 
         mailboxes = self.repository.list_active_mailboxes(connection_id)
         logger.info("开始同步全部邮箱收件箱：connection=%s mailboxCount=%s", connection_id or "all", len(mailboxes))
+        errors: list[dict[str, str | None]] = []
         for mailbox in mailboxes:
             resolved_connection_id = mailbox.get("connection_id") or connection_id
             if not resolved_connection_id:
                 logger.warning("跳过未绑定连接的邮箱收件箱同步：mailbox=%s", mailbox["email"])
                 continue
-            self.sync_mailbox_inbox(resolved_connection_id, mailbox["email"])
-        logger.info("全部邮箱收件箱同步完成：connection=%s mailboxCount=%s", connection_id or "all", len(mailboxes))
+            try:
+                self.sync_mailbox_inbox(resolved_connection_id, mailbox["email"])
+            except SYNC_RECOVERABLE_ERRORS as exc:
+                logger.warning(
+                    "邮箱收件箱同步失败，继续返回本地缓存：connection=%s mailbox=%s error=%s",
+                    resolved_connection_id,
+                    mailbox["email"],
+                    exc,
+                )
+                errors.append(self.sync_error_payload(resolved_connection_id, mailbox["email"], exc))
+        logger.info(
+            "全部邮箱收件箱同步完成：connection=%s mailboxCount=%s failed=%s",
+            connection_id or "all",
+            len(mailboxes),
+            len(errors),
+        )
+        return errors
 
     def list_with_optional_sync(
         self,
@@ -170,11 +213,24 @@ class MailService:
         """按请求参数决定是否先同步远端，再返回本地邮件列表。"""
 
         normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
+        sync_errors: list[dict[str, str | None]] = []
         if sync and normalized_mailbox:
-            self.sync_mailbox_inbox(connection_id, normalized_mailbox)
+            try:
+                self.sync_mailbox_inbox(connection_id, normalized_mailbox)
+            except SYNC_RECOVERABLE_ERRORS as exc:
+                logger.warning(
+                    "邮箱收件箱同步失败，返回本地缓存：connection=%s mailbox=%s error=%s",
+                    connection_id or "auto",
+                    normalized_mailbox,
+                    exc,
+                )
+                sync_errors.append(self.sync_error_payload(connection_id, normalized_mailbox, exc))
         elif sync:
-            self.sync_all_mailbox_inboxes(connection_id)
-        return self.list(connection_id, normalized_mailbox, limit, offset, keyword)
+            sync_errors.extend(self.sync_all_mailbox_inboxes(connection_id))
+        result = self.list(connection_id, normalized_mailbox, limit, offset, keyword)
+        if sync_errors:
+            result["syncErrors"] = sync_errors
+        return result
 
     def delete_remote(self, mail_id: int) -> bool:
         """删除单封远端邮件并删除本地缓存。
