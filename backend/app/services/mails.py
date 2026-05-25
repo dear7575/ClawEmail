@@ -301,6 +301,27 @@ class MailService:
         )
         return result
 
+    def mark_read(self, connection_id: str | None = None, mailbox_email: str | None = None) -> dict[str, int | bool]:
+        """批量将本地邮件标记为已读。
+
+        参数:
+            connection_id: 可选 Claw 连接 ID。
+            mailbox_email: 可选邮箱过滤条件。
+
+        返回:
+            标记成功状态和本次更新的邮件数量。
+        """
+
+        normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
+        updated = self.repository.mark_mails_read(connection_id=connection_id, mailbox_email=normalized_mailbox)
+        logger.info(
+            "批量标记邮件已读完成：connection=%s mailbox=%s updated=%s",
+            connection_id or "all",
+            normalized_mailbox or "all",
+            updated,
+        )
+        return {"success": True, "updated": updated}
+
     def send(self, body: SendMailBody) -> dict[str, str]:
         """发送新邮件。"""
 

@@ -79,6 +79,17 @@ def clear_mails(
     return result
 
 
+@router.post("/api/mails/mark-read")
+def mark_mails_read(
+    connectionId: str | None = Query(default=None),
+    mailbox: str | None = Query(default=None),
+) -> dict[str, int | bool]:
+    """批量将当前范围内的本地邮件标记为已读。"""
+
+    logger.info("API 批量标记邮件已读：connection=%s mailbox=%s", connectionId or "all", mailbox or "all")
+    return mail_service.mark_read(connection_id=connectionId, mailbox_email=mailbox)
+
+
 @router.delete("/api/mails/{mail_id}")
 def delete_mail(mail_id: int) -> dict[str, bool]:
     """删除单封远端邮件并清理本地缓存。"""

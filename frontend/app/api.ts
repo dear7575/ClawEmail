@@ -379,6 +379,24 @@ export async function clearMails(input: {
   return data as ClearMailsResult;
 }
 
+export type MarkMailsReadResult = {
+  success: boolean;
+  updated: number;
+};
+
+export async function markMailsRead(input: {
+  mailbox?: string;
+  connectionId?: string;
+} = {}): Promise<MarkMailsReadResult> {
+  const params = new URLSearchParams();
+  if (input.mailbox) params.set("mailbox", input.mailbox);
+  if (input.connectionId) params.set("connectionId", input.connectionId);
+  const query = params.toString();
+  return requestJson<MarkMailsReadResult>(`/api/mails/mark-read${query ? `?${query}` : ""}`, {
+    method: "POST"
+  });
+}
+
 export type SendMailInput = {
   from: string;
   to: string[];

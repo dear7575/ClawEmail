@@ -239,6 +239,41 @@ def test_mail_list_supports_pagination_and_keyword(tmp_path, monkeypatch, test_c
     assert searched.json()["items"][0]["subject"] == "alpha subject"
 
 
+def test_mark_mails_read_updates_filtered_local_rows(tmp_path, monkeypatch, test_client) -> None:
+    """一键已读只更新当前邮箱范围内的未读邮件。"""
+
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    repository.save_mail({
+        "provider_mail_id": "remote-1",
+        "mailbox_email": "one@claw.163.com",
+        "subject": "one unread",
+        "raw_json": "{}",
+    })
+    repository.save_mail({
+        "provider_mail_id": "remote-2",
+        "mailbox_email": "one@claw.163.com",
+        "subject": "one unread again",
+        "raw_json": "{}",
+    })
+    repository.save_mail({
+        "provider_mail_id": "remote-3",
+        "mailbox_email": "two@claw.163.com",
+        "subject": "two unread",
+        "raw_json": "{}",
+    })
+    client = test_client
+
+    response = client.post("/api/mails/mark-read?mailbox=one@claw.163.com")
+    listed = client.get("/api/mails")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "updated": 2}
+    rows = {item["subject"]: item for item in listed.json()["items"]}
+    assert rows["one unread"]["read_at"] is not None
+    assert rows["one unread again"]["read_at"] is not None
+    assert rows["two unread"]["read_at"] is None
+
+
 def test_mail_sync_network_error_returns_local_cache(tmp_path, monkeypatch, test_client) -> None:
     """远端同步网络失败时返回本地缓存，避免前端代理收到 502/连接重置。"""
 

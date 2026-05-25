@@ -509,6 +509,7 @@ a:hover {
     align-items: center;
     justify-content: center;
     gap: 6px;
+    flex: 0 0 auto;
     min-height: 22px;
     border: 1px solid var(--border);
     border-radius: 999px;
@@ -518,6 +519,7 @@ a:hover {
     font-size: 11px;
     font-weight: 750;
     line-height: 1;
+    white-space: nowrap;
     vertical-align: middle;
 }
 
@@ -845,6 +847,12 @@ a:hover {
     padding: 0 18px;
     font-size: 17px;
     font-weight: 900;
+}
+
+.mobile-menu-btn,
+.mobile-rail-head,
+.mobile-rail-veil {
+    display: none;
 }
 
 .brand-mark {
@@ -1545,6 +1553,11 @@ a:hover {
     align-items: flex-start;
 }
 
+.notify-head > div,
+.push-head > div {
+    min-width: 0;
+}
+
 .push-head strong {
     display: block;
     font-size: 16px;
@@ -1694,6 +1707,10 @@ a:hover {
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+}
+
+.connection-card .card-head > div {
+    min-width: 0;
 }
 
 .connection-card h2 {
@@ -2229,6 +2246,19 @@ a:hover {
     white-space: nowrap;
     letter-spacing: 0;
     text-transform: none;
+}
+
+.inbox-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.inbox-action-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .scroll {
@@ -3055,51 +3085,106 @@ a:hover {
         padding: 0;
     }
 
-    .rail {
-        position: sticky;
-        top: 58px;
-        z-index: 19;
-        width: 100%;
-        height: auto;
-        max-height: none;
-        overflow-x: auto;
-        overflow-y: hidden;
-        flex: 0 0 auto;
-        border-right: 0;
-        border-bottom: 1px solid var(--border);
-        padding: 10px 12px;
-        scrollbar-width: none;
+    .mobile-menu-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        display: inline-grid;
+        place-items: center;
+        border-radius: 10px;
+        padding: 0;
     }
 
-    .rail::-webkit-scrollbar {
-        display: none;
+    .mobile-menu-btn svg {
+        width: 17px;
+        height: 17px;
+    }
+
+    .mobile-rail-veil {
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        display: block;
+        background: rgba(15, 23, 42, 0.32);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease;
+    }
+
+    .mobile-rail-veil.open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .rail {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 91;
+        width: min(244px, calc(100vw - 72px));
+        height: auto;
+        max-height: none;
+        overflow-y: auto;
+        flex: 0 0 auto;
+        border-right: 1px solid var(--border);
+        border-bottom: 0;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: none;
+        transform: translateX(-110%);
+        transition: transform 180ms ease;
+    }
+
+    .rail.open {
+        transform: translateX(0);
+        box-shadow: 24px 0 70px rgba(15, 23, 42, 0.18);
+    }
+
+    [data-theme="dark"] .rail {
+        background: rgba(15, 23, 42, 0.88);
+    }
+
+    .mobile-rail-head {
+        min-height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid var(--border-soft);
+        margin: -2px -2px 12px;
+        padding: 0 2px 12px;
+        color: var(--foreground);
+        font-size: 15px;
+        font-weight: 900;
     }
 
     .rail nav {
-        width: max-content;
-        min-width: 100%;
-        display: flex;
-        gap: 8px;
+        width: 100%;
+        min-width: 0;
+        display: grid;
+        gap: 7px;
     }
 
     .rail nav button {
-        width: auto;
-        min-width: max-content;
-        height: 36px;
-        display: inline-flex;
-        grid-template-columns: none;
-        justify-content: center;
-        padding: 0 12px;
-        white-space: nowrap;
+        width: 100%;
+        min-width: 0;
+        height: 40px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        justify-content: stretch;
+        padding: 0 13px;
+        white-space: normal;
     }
 
     .rail nav button .count {
-        min-width: 20px;
-        padding: 1px 6px;
+        min-width: 22px;
+        padding: 2px 6px;
     }
 
     .resource-rail .sidebar-status {
-        display: none;
+        display: block;
+        margin-top: auto;
     }
 
     .rail-resizer,
@@ -3170,6 +3255,18 @@ a:hover {
     .connection-bind .actions button,
     .card-actions button {
         flex: 1 1 128px;
+    }
+
+    .connection-card .card-actions {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-items: center;
+    }
+
+    .connection-card .card-actions button {
+        width: 100%;
+        min-width: 0;
+        padding-inline: 8px;
     }
 
     .stats-grid,
@@ -3423,18 +3520,18 @@ a:hover {
 
     .duck-row > .ops {
         display: grid;
-        grid-template-columns: 82px minmax(0, 1fr);
+        grid-template-columns: 82px repeat(3, 34px);
         align-items: center;
         gap: 10px;
         padding: 10px 12px;
     }
 
     .duck-row > .ops button {
-        justify-self: start;
+        justify-self: stretch;
     }
 
     .duck-row > .ops button + button {
-        margin-left: 6px;
+        margin-left: 0;
     }
 
     .ops {
@@ -3454,10 +3551,10 @@ a:hover {
         align-items: stretch;
         flex-wrap: wrap;
         justify-content: flex-start;
+        gap: 8px;
     }
 
     .table-pager-filters,
-    .table-pager-controls,
     .pager-search {
         min-width: 100%;
         width: 100%;
@@ -3465,8 +3562,27 @@ a:hover {
     }
 
     .table-pager-controls {
+        min-width: 0;
+        width: 100%;
         justify-content: flex-start;
         flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .pager-total {
+        flex: 1 1 72px;
+    }
+
+    .pager-stepper,
+    .pager-refresh {
+        flex: 0 0 auto;
+    }
+
+    .table-pager .pager-size-select {
+        flex: 0 0 92px;
+        width: 92px;
+        min-width: 92px;
+        height: 30px;
     }
 
     .range-grid {
@@ -3575,13 +3691,11 @@ a:hover {
     }
 
     .rail {
-        top: 58px;
-        padding: 9px 10px;
+        padding: 13px;
     }
 
     .rail nav button {
-        height: 34px;
-        padding: 0 11px;
+        height: 39px;
         font-size: 12px;
     }
 
@@ -3595,17 +3709,19 @@ a:hover {
     }
 
     .hero-actions,
-    .card-actions,
     .connection-bind .actions {
         display: grid;
         grid-template-columns: 1fr;
+    }
+
+    .connection-card .card-actions {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     .stat-card strong {
         font-size: 22px;
     }
 
-    .connection-card .card-head,
     .listener-card .top {
         flex-direction: column;
     }
@@ -3628,6 +3744,15 @@ a:hover {
     .pane-head > span:last-child {
         width: 100%;
         justify-content: space-between;
+    }
+
+    .list-pane .pane-head > .inbox-actions {
+        justify-content: space-between;
+        flex-wrap: wrap;
+    }
+
+    .inbox-action-buttons {
+        margin-left: auto;
     }
 
     .list-pane .scroll {

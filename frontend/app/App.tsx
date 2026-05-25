@@ -10,7 +10,7 @@ import {Dialog, DialogContent, DialogDescription, DialogTitle} from "./component
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./components/ui/select";
 import {PrefsBar, usePrefs} from "./i18n";
 import {parseServerTime} from "./time";
-import {LogOut, Pencil, Send, Trash2} from "lucide-react";
+import {LogOut, Menu, Pencil, Send, Trash2, X} from "lucide-react";
 import {
     type ClawAuthStatus,
     convertSub2Account,
@@ -189,6 +189,7 @@ export function App() {
     const [loginBusy, setLoginBusy] = useState(Boolean(initialAdminPassword));
 
     const [view, setView] = useState<View>(readInitialView);
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [connections, setConnections] = useState<ClawAuthStatus[]>([]);
     const [selectedConnectionId, setSelectedConnectionId] = useState("");
     const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
@@ -382,6 +383,11 @@ export function App() {
 
     function removeToast(id: number) {
         setToasts((items) => items.filter((item) => item.id !== id));
+    }
+
+    function switchView(nextView: View) {
+        setView(nextView);
+        setMobileNavOpen(false);
     }
 
     function notify(type: ToastItem["type"], message: string) {
@@ -1350,6 +1356,15 @@ export function App() {
         <main className="app-shell resource-shell">
             <header className="app-topbar">
                 <div className="topbar-brand">
+                    <button
+                        type="button"
+                        className="mobile-menu-btn"
+                        onClick={() => setMobileNavOpen(true)}
+                        aria-label="打开菜单"
+                        aria-expanded={mobileNavOpen}
+                    >
+                        <Menu aria-hidden="true"/>
+                    </button>
                     <span className="brand-mark">C</span>
                     <span>ClawEmail</span>
                 </div>
@@ -1382,35 +1397,52 @@ export function App() {
                 ))}
             </div>
 
-            <aside className="rail resource-rail">
+            <div
+                className={`mobile-rail-veil ${mobileNavOpen ? "open" : ""}`}
+                onClick={() => setMobileNavOpen(false)}
+                aria-hidden="true"
+            />
+
+            <aside className={`rail resource-rail ${mobileNavOpen ? "open" : ""}`}>
+                <div className="mobile-rail-head">
+                    <span>菜单</span>
+                    <button
+                        type="button"
+                        className="ghost icon-btn"
+                        onClick={() => setMobileNavOpen(false)}
+                        aria-label="关闭菜单"
+                    >
+                        <X aria-hidden="true"/>
+                    </button>
+                </div>
                 <nav>
-                    <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+                    <button className={view === "dashboard" ? "active" : ""} onClick={() => switchView("dashboard")}>
                         <span>仪表盘</span>
                     </button>
-                    <button className={view === "inbox" ? "active" : ""} onClick={() => setView("inbox")}>
+                    <button className={view === "inbox" ? "active" : ""} onClick={() => switchView("inbox")}>
                         <span>收件管理</span>
                         <span className="count">{unreadCount}</span>
                     </button>
-                    <button className={view === "connections" ? "active" : ""} onClick={() => setView("connections")}>
+                    <button className={view === "connections" ? "active" : ""} onClick={() => switchView("connections")}>
                         <span>连接管理</span>
                         <span className="count">{activeConnections.length}</span>
                     </button>
-                    <button className={view === "mailboxes" ? "active" : ""} onClick={() => setView("mailboxes")}>
+                    <button className={view === "mailboxes" ? "active" : ""} onClick={() => switchView("mailboxes")}>
                         <span>Claw 邮箱</span>
                         <span className="count">{activeMailboxes.length}</span>
                     </button>
-                    <button className={view === "duck" ? "active" : ""} onClick={() => setView("duck")}>
+                    <button className={view === "duck" ? "active" : ""} onClick={() => switchView("duck")}>
                         <span>Duck 邮箱</span>
                         <span className="count">{activeDuckAddressCount}</span>
                     </button>
-                    <button className={view === "accountPush" ? "active" : ""} onClick={() => setView("accountPush")}>
+                    <button className={view === "accountPush" ? "active" : ""} onClick={() => switchView("accountPush")}>
                         <span>账号推送</span>
                     </button>
                     <button className={view === "notifications" ? "active" : ""}
-                            onClick={() => setView("notifications")}>
+                            onClick={() => switchView("notifications")}>
                         <span>消息通知</span>
                     </button>
-                    <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+                    <button className={view === "settings" ? "active" : ""} onClick={() => switchView("settings")}>
                         <span>系统设置</span>
                     </button>
                 </nav>
@@ -1875,6 +1907,19 @@ export function App() {
                         onSelectMail={(id) => loadMail(id).catch(reportError)}
                         onRefresh={handleRefreshMails}
                         refreshing={mailRefreshBusy}
+                        onMarkedRead={(updated, msg) => {
+                            if (updated > 0) {
+                                const readAt = new Date().toISOString();
+                                setMails((items) => items.map((mail) => (
+                                    mail.read_at ? mail : {...mail, read_at: readAt}
+                                )));
+                                if (selectedMail && !selectedMail.read_at) {
+                                    setSelectedMail({...selectedMail, read_at: readAt});
+                                }
+                                loadMails(selectedMailbox, false, mailConnectionFilter(selectedMailbox)).catch(reportError);
+                            }
+                            showStatus(msg);
+                        }}
                         onCleared={(deleted, failed, msg) => {
                             if (deleted > 0) {
                                 setMails([]);

@@ -437,6 +437,25 @@ class MailRepository:
             """), {"id": mail_id})
         return self.get_mail(mail_id)
 
+    def mark_mails_read(self, connection_id: str | None = None, mailbox_email: str | None = None) -> int:
+        """批量将匹配范围内的未读邮件标记为已读。"""
+
+        where = ["read_at IS NULL"]
+        params: dict[str, Any] = {}
+        if connection_id:
+            where.append("connection_id = :connection_id")
+            params["connection_id"] = connection_id
+        if mailbox_email:
+            where.append("mailbox_email = :mailbox_email")
+            params["mailbox_email"] = mailbox_email
+        with self.engine.begin() as connection:
+            result = connection.execute(text(f"""
+                UPDATE mails
+                SET read_at = CURRENT_TIMESTAMP
+                WHERE {" AND ".join(where)}
+            """), params)
+        return result.rowcount if result.rowcount >= 0 else 0
+
     def list_attachments(self, mail_id: int) -> list[dict[str, Any]]:
         """列出本地邮件附件元数据。"""
 

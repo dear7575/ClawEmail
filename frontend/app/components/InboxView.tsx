@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clearMails, deleteMail, replyMail, type MailDetail, type MailSummary } from "../api";
+import { clearMails, deleteMail, markMailsRead, replyMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
 import { parseMailTime, parseServerTime } from "../time";
@@ -21,6 +21,7 @@ type Props = {
   onSelectMail: (id: number) => void;
   onRefresh: () => void;
   refreshing?: boolean;
+  onMarkedRead: (updated: number, msg: string) => void;
   onCleared: (deleted: number, failed: number, msg: string) => void;
   onDeleted: (id: number, msg: string) => void;
   onReplied: (msg: string) => void;
@@ -67,6 +68,7 @@ export function InboxView({
   onSelectMail,
   onRefresh,
   refreshing = false,
+  onMarkedRead,
   onCleared,
   onDeleted,
   onReplied,
@@ -86,6 +88,7 @@ export function InboxView({
   const [replyBusy, setReplyBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [markReadBusy, setMarkReadBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
@@ -150,6 +153,20 @@ export function InboxView({
     }
   }
 
+  async function handleMarkAllRead() {
+    setMarkReadBusy(true);
+    try {
+      const result = await markMailsRead({
+        mailbox: selectedMailbox || undefined
+      });
+      onMarkedRead(result.updated, result.updated > 0 ? `已标记 ${result.updated} 封邮件为已读` : "没有未读邮件");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMarkReadBusy(false);
+    }
+  }
+
   return (
     <div
       className="inbox"
@@ -158,15 +175,23 @@ export function InboxView({
       <section className="list-pane">
         <div className="pane-head">
           <span className="label">{selectedMailbox || t("inbox.list.noMailbox")}</span>
-          <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span className="inbox-actions">
             <span className="tag muted">{plural(t, "inbox.list.count", mails.length)}</span>
-            <button
-              className="danger"
-              onClick={() => setClearConfirmOpen(true)}
-              disabled={mails.length === 0 || clearBusy}
-            >
-              {clearBusy ? "清空中" : "清空邮件"}
-            </button>
+            <span className="inbox-action-buttons">
+              <button
+                onClick={handleMarkAllRead}
+                disabled={mails.length === 0 || markReadBusy}
+              >
+                {markReadBusy ? "标记中" : "一键已读"}
+              </button>
+              <button
+                className="danger"
+                onClick={() => setClearConfirmOpen(true)}
+                disabled={mails.length === 0 || clearBusy}
+              >
+                {clearBusy ? "清空中" : "清空邮件"}
+              </button>
+            </span>
           </span>
         </div>
         <TablePager
