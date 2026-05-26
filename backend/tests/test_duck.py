@@ -202,3 +202,35 @@ def test_delete_duck_address(tmp_path, monkeypatch, test_client) -> None:
     assert response.status_code == 200
     assert response.json() == {"success": True}
     assert listed.json()["items"] == []
+
+
+def test_repeated_duck_address_deletes_keep_listener_endpoint_available(tmp_path, monkeypatch, test_client) -> None:
+    reset_duck_service(tmp_path, monkeypatch)
+    client = test_client
+    account = create_account(client)
+    import app.api.duck as duck_api_module
+
+    address_ids: list[int] = []
+    for index in range(20):
+        row = duck_api_module.duck_service.repository.save_address({
+            "account_id": account["id"],
+            "address": f"delete-{index}@duck.com",
+            "local_part": f"delete-{index}",
+            "forwarding_mailbox_email": "target@claw.163.com",
+            "note": "delete stress",
+            "raw_json": "{}",
+        })
+        address_ids.append(row["id"])
+
+    for address_id in address_ids:
+        deleted = client.delete(f"/api/duck/addresses/{address_id}")
+        listeners = client.get("/api/listeners")
+
+        assert deleted.status_code == 200
+        assert deleted.json() == {"success": True}
+        assert listeners.status_code == 200
+        assert "items" in listeners.json()
+
+    listed = client.get("/api/duck/addresses")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 0

@@ -1702,6 +1702,10 @@ a:hover {
     gap: 12px;
 }
 
+.connection-card .card-actions {
+    justify-content: flex-end;
+}
+
 .connection-card .card-head {
     display: flex;
     align-items: flex-start;
@@ -3259,8 +3263,9 @@ a:hover {
 
     .connection-card .card-actions {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(48px, 64px));
         align-items: center;
+        justify-content: flex-end;
     }
 
     .connection-card .card-actions button {
@@ -3519,15 +3524,19 @@ a:hover {
     }
 
     .duck-row > .ops {
-        display: grid;
-        grid-template-columns: 82px repeat(3, 34px);
+        display: flex;
         align-items: center;
-        gap: 10px;
+        justify-content: flex-end;
+        gap: 6px;
         padding: 10px 12px;
     }
 
+    .duck-row > .ops::before {
+        margin-right: auto;
+    }
+
     .duck-row > .ops button {
-        justify-self: stretch;
+        flex: 0 0 auto;
     }
 
     .duck-row > .ops button + button {
@@ -3715,7 +3724,8 @@ a:hover {
     }
 
     .connection-card .card-actions {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(48px, 64px));
+        justify-content: flex-end;
     }
 
     .stat-card strong {

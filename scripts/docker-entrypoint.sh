@@ -4,15 +4,6 @@ set -eu
 # 容器内同时启动 FastAPI 与 Next.js，任一进程退出都让容器退出，便于 Docker 重启策略接管。
 cd /app
 
-python /app/backend/app/main.py &
-backend_pid=$!
-
-cd /app/frontend
-node ./node_modules/next/dist/bin/next start \
-  --hostname "${FRONTEND_HOST:-0.0.0.0}" \
-  --port "${FRONTEND_PORT:-3000}" &
-frontend_pid=$!
-
 health_interval="${HEALTHCHECK_INTERVAL_SECONDS:-30}"
 health_timeout="${HEALTHCHECK_TIMEOUT_SECONDS:-5}"
 health_retries="${HEALTHCHECK_RETRIES:-3}"
@@ -20,10 +11,17 @@ health_start_period="${HEALTHCHECK_START_PERIOD_SECONDS:-45}"
 health_failures=0
 last_health_check=0
 health_start_after=$(($(date +%s) + health_start_period))
+backend_pid=""
+frontend_pid=""
 
 shutdown() {
   # 收到停止信号时同时关闭前后端，避免留下孤儿进程。
-  kill "$backend_pid" "$frontend_pid" 2>/dev/null || true
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+  fi
 }
 
 handle_stop() {
@@ -76,6 +74,22 @@ exit_after_process_stopped() {
   exit "$exit_code"
 }
 
+wait_for_backend_ready() {
+  backend_url="http://127.0.0.1:${PORT:-8000}/health"
+  backend_wait_deadline=$(($(date +%s) + ${BACKEND_START_TIMEOUT_SECONDS:-30}))
+  while ! curl -fsS --max-time 2 "$backend_url" >/dev/null 2>&1; do
+    if ! is_process_alive "$backend_pid"; then
+      exit_after_process_stopped "backend" "$backend_pid" "$backend_pid"
+    fi
+    if [ "$(date +%s)" -ge "$backend_wait_deadline" ]; then
+      echo "backend did not become ready before frontend startup: $backend_url" >&2
+      wait "$backend_pid" 2>/dev/null || true
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
 check_url() {
   name="$1"
   url="$2"
@@ -118,6 +132,17 @@ check_http_health() {
 }
 
 trap handle_stop INT TERM
+
+python /app/backend/app/main.py &
+backend_pid=$!
+
+wait_for_backend_ready
+
+cd /app/frontend
+node ./node_modules/next/dist/bin/next start \
+  --hostname "${FRONTEND_HOST:-0.0.0.0}" \
+  --port "${FRONTEND_PORT:-3000}" &
+frontend_pid=$!
 
 while true; do
   if ! is_process_alive "$backend_pid"; then

@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {CommunicationRulesDrawer} from "./components/CommunicationRulesDrawer";
 import {ComposeDrawer} from "./components/ComposeDrawer";
 import {InboxView} from "./components/InboxView";
@@ -204,6 +204,8 @@ export function App() {
     const [duckAccounts, setDuckAccounts] = useState<DuckAccount[]>([]);
     const [duckAddresses, setDuckAddresses] = useState<DuckAddress[]>([]);
     const [duckAddressTotalCount, setDuckAddressTotalCount] = useState(0);
+    const [duckAddressGlobalCount, setDuckAddressGlobalCount] = useState(0);
+    const [duckAddressRefreshBusy, setDuckAddressRefreshBusy] = useState(false);
     const [duckAddressOffset, setDuckAddressOffset] = useState(0);
     const [duckAddressPageSize, setDuckAddressPageSize] = useState<PageSizeOption>(DEFAULT_LIST_PAGE_SIZE);
     const [duckAddressKeyword, setDuckAddressKeyword] = useState("");
@@ -232,6 +234,7 @@ export function App() {
 
     const [listenerItems, setListenerItems] = useState<ListenerSnapshot[]>([]);
     const [listenerBusy, setListenerBusy] = useState(false);
+    const listenerLoadRef = useRef<Promise<void> | null>(null);
     const [listenersDrawerOpen, setListenersDrawerOpen] = useState(false);
     const [showListenerReconnectNotice, setShowListenerReconnectNotice] = useState(() => (
         readBooleanPreference(LISTENER_RECONNECT_NOTICE_STORAGE_KEY, false)
@@ -499,15 +502,21 @@ export function App() {
     }
 
     async function loadListeners() {
-        setListenerBusy(true);
-        try {
-            const data = await fetchListeners();
-            setListenerItems(data);
-        } catch (err) {
-            reportError(err);
-        } finally {
-            setListenerBusy(false);
-        }
+        if (listenerLoadRef.current) return listenerLoadRef.current;
+        const task = (async () => {
+            setListenerBusy(true);
+            try {
+                const data = await fetchListeners();
+                setListenerItems(data);
+            } catch (err) {
+                reportError(err);
+            } finally {
+                setListenerBusy(false);
+                listenerLoadRef.current = null;
+            }
+        })();
+        listenerLoadRef.current = task;
+        return task;
     }
 
     async function loadDuckAccounts(): Promise<DuckAccount[]> {
@@ -545,6 +554,31 @@ export function App() {
             return [...items, ...others];
         });
         return items;
+    }
+
+    async function loadDuckAddressGlobalCount(): Promise<number> {
+        const data = await fetchDuckAddresses({
+            limit: 1,
+            offset: 0
+        });
+        const count = data.total ?? data.count ?? data.items.length;
+        setDuckAddressGlobalCount(count);
+        return count;
+    }
+
+    async function handleRefreshDuckAddresses() {
+        if (duckBusy || duckAddressRefreshBusy) return;
+        setDuckAddressRefreshBusy(true);
+        try {
+            await Promise.all([
+                loadDuckAddresses(selectedDuckAccount?.id),
+                loadDuckAddressGlobalCount()
+            ]);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setDuckAddressRefreshBusy(false);
+        }
     }
 
     useEffect(() => {
@@ -597,6 +631,7 @@ export function App() {
             .then((data) => {
                 setDuckAddresses(data.items);
                 setDuckAddressTotalCount(data.total ?? data.count ?? data.items.length);
+                loadDuckAddressGlobalCount().catch(reportError);
             })
             .catch(reportError);
     }, [password]);
@@ -657,7 +692,8 @@ export function App() {
         const intervalMs = REFRESH_INTERVAL_MS[ duckAddressRefreshInterval ];
         if (!intervalMs) return;
         const timer = window.setInterval(() => {
-            loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
+            if (duckBusy || duckAddressRefreshBusy) return;
+            handleRefreshDuckAddresses();
         }, intervalMs);
         return () => window.clearInterval(timer);
     }, [
@@ -667,7 +703,9 @@ export function App() {
         selectedDuckAccount?.id,
         duckAddressOffset,
         duckAddressPageSize,
-        duckAddressKeyword
+        duckAddressKeyword,
+        duckBusy,
+        duckAddressRefreshBusy
     ]);
 
     useEffect(() => {
@@ -1188,6 +1226,7 @@ export function App() {
             setSelectedDuckAccountId(account.id);
             showStatus(`Duck Token 已保存 · ${account.label}`);
             await loadDuckAccounts();
+            await loadDuckAddressGlobalCount();
             await loadDuckAddresses(account.id);
         } catch (err) {
             reportError(err);
@@ -1207,6 +1246,7 @@ export function App() {
             setDuckNote("");
             showStatus(`已生成 Duck 邮箱 · ${row.address}`);
             await loadDuckAccounts();
+            await loadDuckAddressGlobalCount();
             await loadDuckAddresses(selectedDuckAccount.id);
         } catch (err) {
             reportError(err);
@@ -1225,6 +1265,7 @@ export function App() {
             setDuckAddressToDelete(null);
             setDuckAddresses((items) => items.filter((item) => item.id !== address.id));
             setDuckAddressTotalCount((count) => Math.max(0, count - 1));
+            setDuckAddressGlobalCount((count) => Math.max(0, count - 1));
             showStatus(`Duck 邮箱记录已删除 · ${address.address}`);
         } catch (err) {
             reportError(err);
@@ -1243,6 +1284,7 @@ export function App() {
             setDuckAccountToRemove(null);
             setDuckAddresses((items) => items.filter((item) => item.account_id !== removedId));
             await loadDuckAccounts();
+            await loadDuckAddressGlobalCount();
         } catch (err) {
             reportError(err);
         } finally {
@@ -1350,7 +1392,7 @@ export function App() {
     const readCount = mails.filter((mail) => mail.read_at).length;
     const unreadCount = mailTotal - readCount;
     const onlineConnections = activeConnections.filter((connection) => connection.connected).length;
-    const activeDuckAddressCount = duckAddressTotalCount || duckAddresses.filter((address) => address.status === "active").length;
+    const duckAddressCount = duckAddressGlobalCount;
 
     return (
         <main className="app-shell resource-shell">
@@ -1433,7 +1475,7 @@ export function App() {
                     </button>
                     <button className={view === "duck" ? "active" : ""} onClick={() => switchView("duck")}>
                         <span>Duck 邮箱</span>
-                        <span className="count">{activeDuckAddressCount}</span>
+                        <span className="count">{duckAddressCount}</span>
                     </button>
                     <button className={view === "accountPush" ? "active" : ""} onClick={() => switchView("accountPush")}>
                         <span>账号推送</span>
@@ -1453,7 +1495,7 @@ export function App() {
                         <span>连接在线</span><span>{onlineConnections} / {activeConnections.length}</span></div>
                     <div className="health-row">
                         <span>监听通道</span><span>{listenerSummary.running} / {listenerSummary.total}</span></div>
-                    <div className="health-row"><span>Duck 邮箱</span><span>{activeDuckAddressCount}</span></div>
+                    <div className="health-row"><span>Duck 邮箱</span><span>{duckAddressCount}</span></div>
                     <div className="health-row"><span>待处理异常</span><span>{listenerSummary.errors}</span></div>
                     <div className="health-row"><span>邮件总共</span><span>{mailTotal}</span></div>
                     <div className="health-row"><span>已读/未读</span><span>{readCount} / {unreadCount}</span></div>
@@ -1588,7 +1630,7 @@ export function App() {
                             </div>
                             <div className="stat-card"><span>子邮箱总数</span><strong>{activeMailboxes.length}</strong>
                             </div>
-                            <div className="stat-card"><span>Duck 邮箱</span><strong>{activeDuckAddressCount}</strong>
+                            <div className="stat-card"><span>Duck 邮箱</span><strong>{duckAddressCount}</strong>
                             </div>
                             <div className="stat-card">
                                 <span>当前列表总共</span><strong>{mailTotal}</strong>
@@ -1787,7 +1829,8 @@ export function App() {
                                     pageSize={duckAddressPageSize}
                                     onOffsetChange={setDuckAddressOffset}
                                     onPageSizeChange={setDuckAddressPageSize}
-                                    onRefresh={() => loadDuckAddresses(selectedDuckAccount?.id).catch(reportError)}
+                                    onRefresh={handleRefreshDuckAddresses}
+                                    refreshing={duckAddressRefreshBusy}
                                     disabled={duckBusy}
                                     placeholder="搜索 Duck、目标邮箱、备注"
                                 />
