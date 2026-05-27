@@ -17,6 +17,8 @@ FROM node:22-bookworm-slim AS node-runtime
 FROM python:3.12-slim-bookworm AS runtime
 WORKDIR /app
 
+ARG IMAGE_REVISION=unknown
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     NODE_ENV=production \
@@ -24,7 +26,8 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8000 \
     FRONTEND_HOST=0.0.0.0 \
     FRONTEND_PORT=3000 \
-    BACKEND_URL=http://127.0.0.1:8000
+    BACKEND_URL=http://127.0.0.1:8000 \
+    IMAGE_REVISION=${IMAGE_REVISION}
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \

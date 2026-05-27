@@ -133,6 +133,41 @@ check_http_health() {
 
 trap handle_stop INT TERM
 
+echo "ClawEmail image revision: ${IMAGE_REVISION:-unknown}"
+
+python - <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path("/app/frontend/.next/routes-manifest.json")
+if not manifest_path.exists():
+    print(f"frontend routes manifest missing: {manifest_path}", file=sys.stderr)
+    sys.exit(1)
+
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+dynamic_routes = [item.get("page") for item in manifest.get("dynamicRoutes", [])]
+rewrites = manifest.get("rewrites", {})
+rewrite_items = [
+    item
+    for group in ("beforeFiles", "afterFiles", "fallback")
+    for item in rewrites.get(group, [])
+]
+api_rewrites = [
+    item
+    for item in rewrite_items
+    if str(item.get("source", "")).startswith("/api/")
+    or str(item.get("source", "")) == "/api/:path*"
+]
+print(f"frontend api route self-check: apiRoute={'/api/[...path]' in dynamic_routes} apiRewriteCount={len(api_rewrites)}")
+if "/api/[...path]" not in dynamic_routes:
+    print("frontend api proxy route missing: expected /api/[...path]", file=sys.stderr)
+    sys.exit(1)
+if api_rewrites:
+    print(f"frontend api rewrites must be empty: {api_rewrites}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 python /app/backend/app/main.py &
 backend_pid=$!
 

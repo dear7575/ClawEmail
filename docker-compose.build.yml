@@ -1,5 +1,6 @@
 services:
   claw-email:
     image: clawemail:local
+    pull_policy: build
     build:
       context: .

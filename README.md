@@ -344,7 +344,7 @@ DATABASE_PATH=./data/app.db
 当前仓库使用前后端分离结构：
 
 - `backend`：FastAPI 后端，提供 `/api/*`、`/health`、SQLite 数据访问和外部服务集成。
-- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 Next rewrites 转发到后端；前端 `/health` 本地响应，用于容器前端健康检查。
+- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 `app/api/[...path]` 服务端路由转发到后端；前端 `/health` 本地响应，用于容器前端健康检查。
 
 已迁移到 FastAPI 的兼容接口：
 

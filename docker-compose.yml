@@ -1,6 +1,7 @@
 services:
   claw-email:
     image: ghcr.io/dear7575/clawemail:latest
+    pull_policy: always
     container_name: claw-email
     restart: unless-stopped
     ports:

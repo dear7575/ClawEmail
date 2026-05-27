@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter
 
 router = APIRouter(tags=["health"])
@@ -9,5 +11,6 @@ async def health() -> dict[str, object]:
 
     return {
         "ok": True,
-        "runtime": "python"
+        "runtime": "python",
+        "revision": os.getenv("IMAGE_REVISION", "unknown")
     }

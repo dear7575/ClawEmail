@@ -15,7 +15,7 @@ def test_health_returns_python_runtime(test_client) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "ok": True,
-        "runtime": "python"
-    }
+    data = response.json()
+    assert data["ok"] is True
+    assert data["runtime"] == "python"
+    assert "revision" in data
