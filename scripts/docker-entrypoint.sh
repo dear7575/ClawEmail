@@ -111,8 +111,9 @@ check_http_health() {
 
   last_health_check="$now"
   backend_url="http://127.0.0.1:${PORT:-8000}/health"
+  backend_sync_url="http://127.0.0.1:${PORT:-8000}/health/sync"
   frontend_url="http://127.0.0.1:${FRONTEND_PORT:-3000}/health"
-  if check_url "backend" "$backend_url" && check_url "frontend" "$frontend_url"; then
+  if check_url "backend" "$backend_url" && check_url "backend-sync" "$backend_sync_url" && check_url "frontend" "$frontend_url"; then
     if [ "$health_failures" -gt 0 ]; then
       echo "container health check recovered" >&2
     fi

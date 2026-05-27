@@ -23,18 +23,18 @@ def list_listeners() -> dict[str, list]:
 
 
 @router.get("/api/events")
-def stream_events() -> StreamingResponse:
+async def stream_events() -> StreamingResponse:
     """建立 SSE 连接，用于向前端推送实时事件。"""
 
     logger.info("API 建立 SSE 事件流")
     queue = sse_hub.add()
 
-    def event_generator():
+    async def event_generator():
         """持续从队列读取 SSE 消息，连接结束时自动注销客户端。"""
 
         try:
             while True:
-                message = queue.get()
+                message = await queue.get()
                 if message is None:
                     break
                 yield message

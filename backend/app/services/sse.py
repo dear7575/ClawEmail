@@ -1,5 +1,5 @@
+import asyncio
 import json
-from queue import Queue
 from typing import Any
 
 
@@ -9,28 +9,31 @@ class SseHub:
     def __init__(self) -> None:
         """初始化进程内 SSE 客户端集合。"""
 
-        self.clients: set[Queue[str | None]] = set()
+        self.clients: dict[asyncio.Queue[str | None], asyncio.AbstractEventLoop] = {}
 
-    def add(self) -> Queue[str | None]:
+    def add(self) -> asyncio.Queue[str | None]:
         """注册一个 SSE 客户端并返回其消息队列。"""
 
-        queue: Queue[str | None] = Queue()
-        self.clients.add(queue)
-        queue.put(": connected\n\n")
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self.clients[queue] = asyncio.get_running_loop()
+        queue.put_nowait(": connected\n\n")
         return queue
 
-    def remove(self, queue: Queue[str | None]) -> None:
+    def remove(self, queue: asyncio.Queue[str | None]) -> None:
         """移除 SSE 客户端并通知生成器结束。"""
 
-        self.clients.discard(queue)
-        queue.put(None)
+        self.clients.pop(queue, None)
+        queue.put_nowait(None)
 
     def broadcast(self, event: str, payload: dict[str, Any]) -> None:
         """向所有 SSE 客户端广播事件。"""
 
         message = f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        for client in list(self.clients):
-            client.put(message)
+        for client, loop in list(self.clients.items()):
+            try:
+                loop.call_soon_threadsafe(client.put_nowait, message)
+            except RuntimeError:
+                self.clients.pop(client, None)
 
 
 sse_hub = SseHub()

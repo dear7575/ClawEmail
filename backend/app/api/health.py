@@ -14,3 +14,14 @@ async def health() -> dict[str, object]:
         "runtime": "python",
         "revision": os.getenv("IMAGE_REVISION", "unknown")
     }
+
+
+@router.get("/health/sync")
+def sync_health() -> dict[str, object]:
+    """通过同步路由校验业务线程池仍可调度请求。"""
+
+    return {
+        "ok": True,
+        "runtime": "python-sync",
+        "revision": os.getenv("IMAGE_REVISION", "unknown")
+    }
