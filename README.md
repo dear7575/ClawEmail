@@ -277,7 +277,7 @@ DATABASE_PATH=./data/app.db
 
 ## 8. 本地运行
 
-本地开发需要分别启动 FastAPI 后端和 Next.js 前端。后端默认监听 `127.0.0.1:8000`，前端默认监听 `0.0.0.0:3001`，前端通过 `BACKEND_URL` 将 `/api/*` 转发到后端；`/health` 由前后端各自本地响应，避免健康检查依赖代理链路。
+本地开发默认由前端目录的 `npm run dev` 同时启动 FastAPI 后端和 Next.js 前端。后端默认监听 `127.0.0.1:8000`，前端默认监听 `0.0.0.0:3001`，前端通过 `BACKEND_URL` 将 `/api/*` 转发到后端；`/health` 由前后端各自本地响应，避免健康检查依赖代理链路。
 
 ```powershell
 cd backend
@@ -289,6 +289,13 @@ python app/main.py
 cd frontend
 npm install
 npm run dev
+```
+
+仅调试前端静态界面、不需要 API 时可运行：
+
+```bash
+cd frontend
+npm run dev:frontend
 ```
 
 默认访问地址为 `http://localhost:3001`。生产 Docker 镜像内会同时启动两个进程，并只对外暴露前端端口 `3000`。

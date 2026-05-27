@@ -1,17 +1,7 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
-    outputFileTracingRoot: import.meta.dirname,
-    async rewrites() {
-        const backendUrl = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
-
-        return [
-            {
-                source: "/api/:path*",
-                destination: `${backendUrl}/api/:path*`
-            }
-        ];
-    }
+    outputFileTracingRoot: import.meta.dirname
 };
 
 export default nextConfig;
