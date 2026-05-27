@@ -524,12 +524,12 @@ export function App() {
         setDuckAccounts(items);
         setSelectedDuckAccountId((current) => {
             if (current && items.some((item) => item.id === current && item.status !== "disabled")) return current;
-            return items.find((item) => item.status !== "disabled")?.id ?? "";
+            return "";
         });
         return items;
     }
 
-    async function loadDuckAddresses(accountId = selectedDuckAccount?.id): Promise<DuckAddress[]> {
+    async function loadDuckAddresses(accountId = selectedDuckAccountId): Promise<DuckAddress[]> {
         const data = await fetchDuckAddresses({
             accountId: accountId || undefined,
             limit: duckAddressPageSize,
@@ -571,7 +571,7 @@ export function App() {
         setDuckAddressRefreshBusy(true);
         try {
             await Promise.all([
-                loadDuckAddresses(selectedDuckAccount?.id),
+                loadDuckAddresses(selectedDuckAccountId),
                 loadDuckAddressGlobalCount()
             ]);
         } catch (err) {
@@ -621,13 +621,7 @@ export function App() {
         loadTelegramSettings().catch(reportError);
         loadSub2Settings().catch(reportError);
         loadDuckAccounts()
-            .then((items) => {
-                const first = items.find((item) => item.status !== "disabled");
-                if (first?.id) {
-                    return fetchDuckAddresses({accountId: first.id, limit: DEFAULT_LIST_PAGE_SIZE, offset: 0});
-                }
-                return {items: [], total: 0, count: 0, limit: DEFAULT_LIST_PAGE_SIZE, offset: 0};
-            })
+            .then(() => fetchDuckAddresses({limit: DEFAULT_LIST_PAGE_SIZE, offset: 0}))
             .then((data) => {
                 setDuckAddresses(data.items);
                 setDuckAddressTotalCount(data.total ?? data.count ?? data.items.length);
@@ -684,8 +678,8 @@ export function App() {
 
     useEffect(() => {
         if (!password || view !== "duck") return;
-        loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
-    }, [password, view, selectedDuckAccount?.id, duckAddressOffset, duckAddressPageSize, duckAddressKeyword]);
+        loadDuckAddresses(selectedDuckAccountId).catch(reportError);
+    }, [password, view, selectedDuckAccountId, duckAddressOffset, duckAddressPageSize, duckAddressKeyword]);
 
     useEffect(() => {
         if (!password || view !== "duck") return;
@@ -700,7 +694,7 @@ export function App() {
         password,
         view,
         duckAddressRefreshInterval,
-        selectedDuckAccount?.id,
+        selectedDuckAccountId,
         duckAddressOffset,
         duckAddressPageSize,
         duckAddressKeyword,
@@ -723,7 +717,9 @@ export function App() {
     useEffect(() => {
         if (!password || view !== "duck") return;
         if (selectedDuckAccountId && activeDuckAccounts.some((account) => account.id === selectedDuckAccountId)) return;
-        setSelectedDuckAccountId(activeDuckAccounts[ 0 ]?.id ?? "");
+        if (selectedDuckAccountId) {
+            setSelectedDuckAccountId("");
+        }
     }, [activeDuckAccounts, password, selectedDuckAccountId, view]);
 
     useEffect(() => {
@@ -733,7 +729,7 @@ export function App() {
 
     useEffect(() => {
         setDuckAddressOffset(0);
-    }, [selectedDuckAccount?.id]);
+    }, [selectedDuckAccountId]);
 
     useEffect(() => {
         if (!password || view !== "duck") return;
@@ -777,6 +773,11 @@ export function App() {
             setSelectedConnectionId(mailbox.connection_id);
         }
         setSelectedMailbox(value);
+    }
+
+    function handleSelectDuckAccount(value: string) {
+        setSelectedDuckAccountId(value === ALL_SELECT_VALUE ? "" : value);
+        setDuckAddressOffset(0);
     }
 
     async function handleSendClawCode() {
@@ -1091,12 +1092,12 @@ export function App() {
         setOpenAiPushBusyDuckAddressId(address.id);
         try {
             const refreshDuckAddresses = async () => {
-                await loadDuckAddresses(selectedDuckAccount?.id).catch(reportError);
+                await loadDuckAddresses(selectedDuckAccountId).catch(reportError);
             };
             const result = await pushOpenAiDuckAddressToSub2(address.id, sub2Settings.defaultGroupId, {
                 onPoll: refreshDuckAddresses
             });
-            await loadDuckAddresses(selectedDuckAccount?.id);
+            await loadDuckAddresses(selectedDuckAccountId);
             const modeText = result.pushMode === "sub2_auth"
                 ? "Sub2 授权创建"
                 : result.pushMode === "fallback_oauth_token"
@@ -1223,11 +1224,10 @@ export function App() {
             });
             setDuckLabel("");
             setDuckToken("");
-            setSelectedDuckAccountId(account.id);
             showStatus(`Duck Token 已保存 · ${account.label}`);
             await loadDuckAccounts();
             await loadDuckAddressGlobalCount();
-            await loadDuckAddresses(account.id);
+            await loadDuckAddresses(selectedDuckAccountId);
         } catch (err) {
             reportError(err);
         } finally {
@@ -1566,16 +1566,17 @@ export function App() {
                                 <span>{mailboxSyncBusy ? t("toolbar.syncing") : t("toolbar.sync")}</span>
                             </button>
                         )}
-                        {view === "duck" && activeDuckAccounts.length > 0 && selectedDuckAccount && (
+                        {view === "duck" && activeDuckAccounts.length > 0 && (
                             <>
                                 <Select
-                                    value={selectedDuckAccount.id}
-                                    onValueChange={(value) => setSelectedDuckAccountId(value)}
+                                    value={selectedDuckAccountId || ALL_SELECT_VALUE}
+                                    onValueChange={handleSelectDuckAccount}
                                 >
                                     <SelectTrigger className="toolbar-select">
-                                        <SelectValue placeholder="Duck Token"/>
+                                        <SelectValue placeholder="全部 Duck Token"/>
                                     </SelectTrigger>
                                     <SelectContent>
+                                        <SelectItem value={ALL_SELECT_VALUE}>全部 Duck Token</SelectItem>
                                         {activeDuckAccounts.map((account) => (
                                             <SelectItem key={account.id} value={account.id}>
                                                 {account.label}
@@ -1583,22 +1584,26 @@ export function App() {
                                         ))}
                                     </SelectContent>
                                 </Select>
-                                <button
-                                    onClick={() => {
-                                        setDuckAccountToUpdate(selectedDuckAccount);
-                                        setDuckTokenUpdate("");
-                                    }}
-                                    disabled={duckBusy}
-                                >
-                                    更新当前 Token
-                                </button>
-                                <button
-                                    className="danger"
-                                    onClick={() => setDuckAccountToRemove(selectedDuckAccount)}
-                                    disabled={duckBusy}
-                                >
-                                    删除当前 Token
-                                </button>
+                                {selectedDuckAccount && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                setDuckAccountToUpdate(selectedDuckAccount);
+                                                setDuckTokenUpdate("");
+                                            }}
+                                            disabled={duckBusy}
+                                        >
+                                            更新当前 Token
+                                        </button>
+                                        <button
+                                            className="danger"
+                                            onClick={() => setDuckAccountToRemove(selectedDuckAccount)}
+                                            disabled={duckBusy}
+                                        >
+                                            删除当前 Token
+                                        </button>
+                                    </>
+                                )}
                             </>
                         )}
                     </div>
