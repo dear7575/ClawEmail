@@ -445,6 +445,8 @@ docker run -d --name clawemail \
 
 `./data` 挂到 `/app/data` 持久化 SQLite。GitHub Actions 会在推送 `main` 后自动构建并推送 `latest` 镜像。
 
-## 致谢
+## 致谢与来源
 
-感谢 [Linux.do](https://linux.do) 社区。
+本项目最初 fork 自 [WangXingFan/ClawEmail](https://github.com/WangXingFan/ClawEmail)，后续已独立维护，并在此基础上进行了功能扩展、架构调整和前后端迁移。
+
+感谢原作者提供的项目基础，也感谢 [Linux.do](https://linux.do) 社区。

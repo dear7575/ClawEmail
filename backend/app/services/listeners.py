@@ -18,6 +18,7 @@ from app.services.claw_im import (
 )
 from app.services.claw_mail import ClawMailClient, attachment_list, claw_mail_client
 from app.services.listener_settings import listener_settings_service
+from app.services.mail_alerts import MailAlertService, mail_alert_service
 from app.services.sse import sse_hub
 
 
@@ -48,12 +49,14 @@ class ListenerManager:
         connection_repository: ClawRepository = claw_repository,
         mail_repository: MailRepository = mail_repository,
         mail_client: ClawMailClient = claw_mail_client,
+        alert_service: MailAlertService = mail_alert_service,
     ) -> None:
         """初始化进程内监听器状态容器和后台事件循环。"""
 
         self.connection_repository = connection_repository
         self.mail_repository = mail_repository
         self.mail_client = mail_client
+        self.alert_service = alert_service
         self.listeners: dict[str, ListenerState] = {}
         self.tasks: dict[str, asyncio.Future] = {}
         self.stop_events: dict[str, asyncio.Event] = {}
@@ -263,6 +266,8 @@ class ListenerManager:
                 "attachments": attachment_list(mail),
             },
         )
+        # 告警发送失败不影响 SSE 推送和监听器生命周期。
+        await asyncio.to_thread(self.alert_service.notify_openai_deactivation_if_needed, saved)
         sse_hub.broadcast("mail", {
             "connectionId": state.connection_id,
             "mailboxEmail": state.email,

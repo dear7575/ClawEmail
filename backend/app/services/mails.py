@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.db.mail_repository import MailRepository, mail_repository, parse_mail_raw_json
 from app.services.claw_mail import ClawMailClient, claw_mail_client, mail_to_repository_input
+from app.services.mail_alerts import MailAlertService, mail_alert_service
 
 
 logger = logging.getLogger(__name__)
@@ -63,11 +64,13 @@ class MailService:
         self,
         repository: MailRepository = mail_repository,
         mail_client: ClawMailClient = claw_mail_client,
+        alert_service: MailAlertService = mail_alert_service,
     ) -> None:
         """初始化邮件服务。"""
 
         self.repository = repository
         self.mail_client = mail_client
+        self.alert_service = alert_service
 
     @staticmethod
     def sync_error_payload(
@@ -151,7 +154,7 @@ class MailService:
             [provider_id for provider_id in local_ids if provider_id not in remote_id_set],
             connection_id,
         )
-        saved = 0
+        saved_count = 0
         for provider_mail_id in remote_ids:
             if self.repository.get_mail_by_provider_id(normalized_mailbox, provider_mail_id, connection_id):
                 continue
@@ -161,15 +164,17 @@ class MailService:
                 connection_id=connection_id,
                 mark_read=False,
             )
-            self.repository.save_mail(mail_to_repository_input(normalized_mailbox, mail, connection_id))
-            saved += 1
+            saved_mail = self.repository.save_mail(mail_to_repository_input(normalized_mailbox, mail, connection_id))
+            # 新邮件入库后执行告警，Telegram 失败不影响收件箱同步。
+            self.alert_service.notify_openai_deactivation_if_needed(saved_mail)
+            saved_count += 1
         logger.info(
             "邮箱收件箱同步完成：connection=%s mailbox=%s remote=%s localRemoved=%s saved=%s",
             connection_id or "legacy",
             normalized_mailbox,
             len(remote_ids),
             removed,
-            saved,
+            saved_count,
         )
 
     def sync_all_mailbox_inboxes(self, connection_id: str | None = None) -> list[dict[str, str | None]]:

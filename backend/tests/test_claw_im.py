@@ -82,10 +82,20 @@ class FakeMailClient:
         }
 
 
+class FakeMailAlertService:
+    def __init__(self) -> None:
+        self.mails: list[dict] = []
+
+    def notify_openai_deactivation_if_needed(self, mail: dict) -> dict:
+        self.mails.append(mail)
+        return {"matched": False, "sent": False}
+
+
 @pytest.mark.asyncio
 async def test_listener_persists_mail_push_and_broadcasts_sse() -> None:
     repository = FakeMailRepository()
-    manager = ListenerManager(mail_repository=repository, mail_client=FakeMailClient())
+    alert_service = FakeMailAlertService()
+    manager = ListenerManager(mail_repository=repository, mail_client=FakeMailClient(), alert_service=alert_service)
     state = ListenerState(connection_id="conn-1", email="root@claw.163.com")
 
     await manager._persist_mail_push(state, "mail-1")
@@ -95,3 +105,4 @@ async def test_listener_persists_mail_push_and_broadcasts_sse() -> None:
     assert repository.saved[0]["provider_mail_id"] == "mail-1"
     assert repository.saved[0]["mailbox_email"] == "root@claw.163.com"
     assert repository.saved[0]["subject"] == "hello"
+    assert alert_service.mails[0]["id"] == 42
