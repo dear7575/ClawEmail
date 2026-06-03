@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 
@@ -26,6 +27,7 @@ from app.api.system import router as system_router
 from app.api.telegram import router as telegram_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services.inbox_sync_scheduler import inbox_sync_scheduler
 
 
 settings = get_settings()
@@ -33,10 +35,21 @@ configure_logging(settings.log_level)
 logger = logging.getLogger("app.main")
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """管理 API 进程级后台任务生命周期。"""
+
+    inbox_sync_scheduler.start()
+    try:
+        yield
+    finally:
+        inbox_sync_scheduler.shutdown()
+
+
 def create_app() -> FastAPI:
     """创建 FastAPI 应用并注册路由、中间件和异常处理器。"""
 
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.include_router(health_router)
     app.include_router(system_router)
     app.include_router(sub2_router)

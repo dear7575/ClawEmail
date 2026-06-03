@@ -77,7 +77,6 @@ type RefreshInterval = "manual" | "30" | "60" | "300";
 const VIEW_STORAGE_KEY = "claw.currentView";
 const LISTENER_RECONNECT_NOTICE_STORAGE_KEY = "claw.listener.reconnectNotice";
 const INBOX_AUTO_REFRESH_STORAGE_KEY = "claw.inbox.autoRefresh";
-const INBOX_SYNC_REFRESH_STORAGE_KEY = "claw.inbox.syncRefresh";
 const LISTENER_STATUS_REFRESH_STORAGE_KEY = "claw.listener.statusRefresh";
 const DUCK_ADDRESS_REFRESH_STORAGE_KEY = "claw.duck.addressRefresh";
 const LIVE_LISTENER_STATUSES = new Set(["running", "open"]);
@@ -242,15 +241,14 @@ export function App() {
     const [inboxAutoRefresh, setInboxAutoRefresh] = useState(() => (
         readBooleanPreference(INBOX_AUTO_REFRESH_STORAGE_KEY, true)
     ));
-    const [inboxSyncRefreshInterval, setInboxSyncRefreshInterval] =
-        useState<RefreshInterval>(() => readRefreshInterval(INBOX_SYNC_REFRESH_STORAGE_KEY));
     const [listenerStatusRefreshInterval, setListenerStatusRefreshInterval] =
         useState<RefreshInterval>(() => readRefreshInterval(LISTENER_STATUS_REFRESH_STORAGE_KEY));
     const [duckAddressRefreshInterval, setDuckAddressRefreshInterval] =
         useState<RefreshInterval>(() => readRefreshInterval(DUCK_ADDRESS_REFRESH_STORAGE_KEY));
     const [serverListenerSettings, setServerListenerSettings] = useState<ListenerSettings>({
         logMode: "quiet",
-        reconnectMode: "standard"
+        reconnectMode: "standard",
+        inboxSyncInterval: "manual"
     });
     const [systemProxyInput, setSystemProxyInput] = useState("");
     const [systemTimeoutInput, setSystemTimeoutInput] = useState("10000");
@@ -600,10 +598,6 @@ export function App() {
     }, [inboxAutoRefresh]);
 
     useEffect(() => {
-        localStorage.setItem(INBOX_SYNC_REFRESH_STORAGE_KEY, inboxSyncRefreshInterval);
-    }, [inboxSyncRefreshInterval]);
-
-    useEffect(() => {
         localStorage.setItem(LISTENER_STATUS_REFRESH_STORAGE_KEY, listenerStatusRefreshInterval);
     }, [listenerStatusRefreshInterval]);
 
@@ -660,16 +654,6 @@ export function App() {
         }, intervalMs);
         return () => window.clearInterval(timer);
     }, [password, listenerStatusRefreshInterval, selectedConnection?.id]);
-
-    useEffect(() => {
-        if (!password || view !== "inbox") return;
-        const intervalMs = REFRESH_INTERVAL_MS[ inboxSyncRefreshInterval ];
-        if (!intervalMs) return;
-        const timer = window.setInterval(() => {
-            loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError);
-        }, intervalMs);
-        return () => window.clearInterval(timer);
-    }, [password, view, inboxSyncRefreshInterval, selectedConnection?.id, selectedMailbox, mailOffset, mailPageSize, mailKeyword]);
 
     useEffect(() => {
         if (!password) return;
@@ -2137,7 +2121,7 @@ export function App() {
                         <div className="settings-panel">
                             <div>
                                 <strong>监听与刷新</strong>
-                                <p>这些设置只保存在当前浏览器，用来控制前端提示和刷新频率。</p>
+                                <p>后台同步设置保存在服务端；页面刷新设置只影响当前浏览器的展示。</p>
                             </div>
                             <label className="setting-row">
                                 <span>
@@ -2163,15 +2147,19 @@ export function App() {
                             </label>
                             <div className="setting-row">
                                 <span>
-                                    <strong>收件定时刷新</strong>
-                                    <small>收件管理页面打开时，按固定频率同步当前邮箱的远端收件箱。</small>
+                                    <strong>后台收件同步</strong>
+                                    <small>API 进程运行时按固定频率同步全部活跃邮箱，新邮件入库后会执行 Telegram 告警规则。</small>
                                 </span>
                                 <Select
-                                    value={inboxSyncRefreshInterval}
-                                    onValueChange={(value) => setInboxSyncRefreshInterval(value as RefreshInterval)}
+                                    value={serverListenerSettings.inboxSyncInterval}
+                                    onValueChange={(value) => setServerListenerSettings({
+                                        ...serverListenerSettings,
+                                        inboxSyncInterval: value as ListenerSettings["inboxSyncInterval"]
+                                    })}
+                                    disabled={settingsBusy}
                                 >
                                     <SelectTrigger className="toolbar-select">
-                                        <SelectValue placeholder="刷新频率"/>
+                                        <SelectValue placeholder="同步频率"/>
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="manual">仅手动</SelectItem>

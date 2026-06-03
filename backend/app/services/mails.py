@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.mail_repository import MailRepository, mail_repository, parse_mail_raw_json
 from app.services.claw_mail import ClawMailClient, claw_mail_client, mail_to_repository_input
 from app.services.mail_alerts import MailAlertService, mail_alert_service
+from app.services.sse import sse_hub
 
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,12 @@ class MailService:
             saved_mail = self.repository.save_mail(mail_to_repository_input(normalized_mailbox, mail, connection_id))
             # 新邮件入库后执行告警，Telegram 失败不影响收件箱同步。
             self.alert_service.notify_openai_deactivation_if_needed(saved_mail)
+            sse_hub.broadcast("mail", {
+                "connectionId": connection_id,
+                "mailboxEmail": normalized_mailbox,
+                "id": saved_mail["id"],
+                "providerMailId": provider_mail_id,
+            })
             saved_count += 1
         logger.info(
             "邮箱收件箱同步完成：connection=%s mailbox=%s remote=%s localRemoved=%s saved=%s",

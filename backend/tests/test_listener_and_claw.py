@@ -62,6 +62,7 @@ def reset_local_services(tmp_path, monkeypatch):
     import app.db.mail_repository as mail_repository_module
     import app.services.listener_settings as listener_settings_module
     import app.services.listeners as listeners_module
+    import app.services.inbox_sync_scheduler as inbox_sync_scheduler_module
     import app.services.claw_auth as claw_auth_module
     import app.services.mails as mails_service_module
 
@@ -71,6 +72,7 @@ def reset_local_services(tmp_path, monkeypatch):
     importlib.reload(mail_repository_module)
     importlib.reload(listener_settings_module)
     importlib.reload(listeners_module)
+    importlib.reload(inbox_sync_scheduler_module)
     importlib.reload(claw_auth_module)
     importlib.reload(mails_service_module)
     import app.api.events as events_api_module
@@ -81,6 +83,7 @@ def reset_local_services(tmp_path, monkeypatch):
     events_api_module.listener_settings_service = listener_settings_module.listener_settings_service
     events_api_module.listener_manager = listeners_module.listener_manager
     events_api_module.listener_manager.worker_enabled = False
+    inbox_sync_scheduler_module.inbox_sync_scheduler.settings_service = listener_settings_module.listener_settings_service
     claw_auth_api_module.claw_auth_service = claw_auth_module.claw_auth_service
     mailboxes_api_module.mailbox_service.repository = mail_repository_module.mail_repository
     mails_api_module.mail_service = mails_service_module.mail_service
@@ -95,14 +98,16 @@ def test_listener_settings_defaults_and_save(tmp_path, monkeypatch, test_client)
     saved = client.put("/api/listener-settings", json={
         "logMode": "verbose",
         "reconnectMode": "slow",
+        "inboxSyncInterval": "60",
     })
 
     assert defaults.status_code == 200
-    assert defaults.json() == {"logMode": "quiet", "reconnectMode": "standard"}
+    assert defaults.json() == {"logMode": "quiet", "reconnectMode": "standard", "inboxSyncInterval": "manual"}
     assert saved.status_code == 200
-    assert saved.json() == {"logMode": "verbose", "reconnectMode": "slow"}
+    assert saved.json() == {"logMode": "verbose", "reconnectMode": "slow", "inboxSyncInterval": "60"}
     assert repository.get("listener.logMode") == "verbose"
     assert repository.get("listener.reconnectMode") == "slow"
+    assert repository.get("inbox.syncInterval") == "60"
 
 
 def test_listeners_returns_empty_snapshot_during_migration(tmp_path, monkeypatch, test_client) -> None:

@@ -122,7 +122,17 @@ def test_openai_deactivation_alert_failure_does_not_mark_read(tmp_path, monkeypa
 
 def test_sync_new_deactivation_mail_sends_alert_and_marks_read(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
+    import app.services.sse as sse_module
+
     telegram = FakeTelegramService()
+    events: list[tuple[str, dict]] = []
+
+    def capture_event(event_type: str, payload: dict) -> None:
+        """捕获同步入库后的 SSE 广播。"""
+
+        events.append((event_type, payload))
+
+    monkeypatch.setattr(sse_module.sse_hub, "broadcast", capture_event)
     alert_service = mail_alerts_module.MailAlertService(repository=repository, telegram_service_value=telegram)
     service = mails_service_module.MailService(
         repository=repository,
@@ -150,6 +160,12 @@ def test_sync_new_deactivation_mail_sends_alert_and_marks_read(tmp_path, monkeyp
 
     assert len(telegram.messages) == 1
     assert saved["read_at"] is not None
+    assert events == [("mail", {
+        "connectionId": "conn-1",
+        "mailboxEmail": "demo@claw.163.com",
+        "id": saved["id"],
+        "providerMailId": "remote-4",
+    })]
 
 
 def test_sync_existing_deactivation_mail_does_not_send_duplicate_alert(tmp_path, monkeypatch) -> None:

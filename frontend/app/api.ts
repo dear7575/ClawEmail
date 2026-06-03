@@ -74,6 +74,7 @@ export type ListenerSnapshot = {
 export type ListenerSettings = {
   logMode: "quiet" | "lifecycle" | "verbose";
   reconnectMode: "standard" | "slow";
+  inboxSyncInterval: "manual" | "30" | "60" | "300";
 };
 
 export type DuckAccount = {

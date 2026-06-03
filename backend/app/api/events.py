@@ -1,5 +1,6 @@
 import logging
 
+from app.services.inbox_sync_scheduler import inbox_sync_scheduler
 from app.services.listener_settings import (
     ListenerSettings,
     ListenerSettingsUpdate,
@@ -60,7 +61,14 @@ def get_listener_settings() -> ListenerSettings:
 
 @router.put("/api/listener-settings", response_model=ListenerSettings)
 def update_listener_settings(body: ListenerSettingsUpdate) -> ListenerSettings:
-    """更新邮件监听器偏好设置。"""
+    """更新邮件监听器与后台刷新偏好设置。"""
 
-    logger.info("API 更新监听器设置：logMode=%s reconnectMode=%s", body.logMode, body.reconnectMode)
-    return listener_settings_service.save(body)
+    logger.info(
+        "API 更新监听器设置：logMode=%s reconnectMode=%s inboxSyncInterval=%s",
+        body.logMode,
+        body.reconnectMode,
+        body.inboxSyncInterval,
+    )
+    settings = listener_settings_service.save(body)
+    inbox_sync_scheduler.reload_settings()
+    return settings
