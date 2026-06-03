@@ -13,7 +13,8 @@ backend/
     repositories/        SQLite 数据访问层
     services/            业务服务与外部接口封装
     main.py              FastAPI 应用入口，可直接由 IDE 启动
-  requirements.txt       后端运行依赖
+  requirements.txt       后端生产运行依赖
+  requirements-dev.txt   后端开发与测试依赖
 frontend/
   app/                   Next.js App Router 前端
     App.tsx              主界面：登录、邮箱、邮件、Duck、Sub2、通知、设置
@@ -281,7 +282,7 @@ DATABASE_PATH=./data/app.db
 
 ```powershell
 cd backend
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python app/main.py
 ```
 

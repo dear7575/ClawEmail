@@ -7,6 +7,7 @@ node_modules
 frontend/node_modules
 frontend/.next
 backend/.pytest_cache
+backend/tests
 backend/**/__pycache__
 backend/**/*.pyc
 dist

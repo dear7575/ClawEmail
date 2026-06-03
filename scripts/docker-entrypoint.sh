@@ -175,9 +175,7 @@ backend_pid=$!
 wait_for_backend_ready
 
 cd /app/frontend
-node ./node_modules/next/dist/bin/next start \
-  --hostname "${FRONTEND_HOST:-0.0.0.0}" \
-  --port "${FRONTEND_PORT:-3000}" &
+HOSTNAME="${FRONTEND_HOST:-0.0.0.0}" PORT="${FRONTEND_PORT:-3000}" node server.js &
 frontend_pid=$!
 
 while true; do
