@@ -71,6 +71,7 @@ def test_get_sub2_settings_returns_defaults(tmp_path, monkeypatch, test_client) 
         "hasApiKey": False,
         "apiKeyPreview": None,
         "defaultGroupId": None,
+        "defaultProxyId": None,
         "openAiAuthLoginEnabled": True,
     }
 
@@ -83,6 +84,7 @@ def test_put_sub2_settings_persists_compatible_keys(tmp_path, monkeypatch, test_
         "apiUrl": " https://sub2.example.com ",
         "apiKey": " 1234567890abcdef ",
         "defaultGroupId": 12,
+        "defaultProxyId": 34,
         "openAiAuthLoginEnabled": False,
     })
 
@@ -92,11 +94,13 @@ def test_put_sub2_settings_persists_compatible_keys(tmp_path, monkeypatch, test_
         "hasApiKey": True,
         "apiKeyPreview": "12345678...cdef",
         "defaultGroupId": 12,
+        "defaultProxyId": 34,
         "openAiAuthLoginEnabled": False,
     }
     assert repository.get("sub2.apiUrl") == "https://sub2.example.com"
     assert repository.get("sub2.apiKey") == "1234567890abcdef"
     assert repository.get("sub2.defaultGroupId") == "12"
+    assert repository.get("sub2.defaultProxyId") == "34"
     assert repository.get("sub2.openAiAuthLoginEnabled") == "false"
 
 
@@ -104,6 +108,7 @@ def test_put_sub2_settings_preserves_api_key_when_omitted(tmp_path, monkeypatch,
     repository, _calls = reset_sub2_service(tmp_path, monkeypatch)
     repository.set("sub2.apiKey", "secret-token")
     repository.set("sub2.defaultGroupId", "9")
+    repository.set("sub2.defaultProxyId", "11")
     client = test_client
 
     response = client.put("/api/sub2/settings", json={
@@ -114,21 +119,26 @@ def test_put_sub2_settings_preserves_api_key_when_omitted(tmp_path, monkeypatch,
     assert response.json()["hasApiKey"] is True
     assert response.json()["apiKeyPreview"] == "secr****"
     assert response.json()["defaultGroupId"] == 9
+    assert response.json()["defaultProxyId"] == 11
     assert response.json()["openAiAuthLoginEnabled"] is True
     assert repository.get("sub2.apiKey") == "secret-token"
     assert repository.get("sub2.defaultGroupId") == "9"
+    assert repository.get("sub2.defaultProxyId") == "11"
 
 
 def test_put_sub2_settings_clears_group_id_when_null(tmp_path, monkeypatch, test_client) -> None:
     repository, _calls = reset_sub2_service(tmp_path, monkeypatch)
     repository.set("sub2.defaultGroupId", "9")
+    repository.set("sub2.defaultProxyId", "8")
     client = test_client
 
-    response = client.put("/api/sub2/settings", json={"defaultGroupId": None})
+    response = client.put("/api/sub2/settings", json={"defaultGroupId": None, "defaultProxyId": None})
 
     assert response.status_code == 200
     assert response.json()["defaultGroupId"] is None
+    assert response.json()["defaultProxyId"] is None
     assert repository.get("sub2.defaultGroupId") == ""
+    assert repository.get("sub2.defaultProxyId") == ""
 
 
 def test_put_sub2_settings_rejects_invalid_group_id(tmp_path, monkeypatch, test_client) -> None:
@@ -136,6 +146,15 @@ def test_put_sub2_settings_rejects_invalid_group_id(tmp_path, monkeypatch, test_
     client = test_client
 
     response = client.put("/api/sub2/settings", json={"defaultGroupId": 0})
+
+    assert response.status_code == 422
+
+
+def test_put_sub2_settings_rejects_invalid_proxy_id(tmp_path, monkeypatch, test_client) -> None:
+    reset_sub2_service(tmp_path, monkeypatch)
+    client = test_client
+
+    response = client.put("/api/sub2/settings", json={"defaultProxyId": 0})
 
     assert response.status_code == 422
 
@@ -172,6 +191,31 @@ def test_get_sub2_groups_uses_bearer_authorization(tmp_path, monkeypatch, test_c
     assert result.status_code == 200
     assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active"
     assert calls[0]["headers"] == {"authorization": "Bearer token"}
+
+
+def test_get_sub2_proxies_fetches_active_proxies(tmp_path, monkeypatch, test_client) -> None:
+    response = httpx.Response(200, json={"data": {"items": [
+        {"id": 7, "name": "proxy-a", "protocol": "http", "host": "1.2.3.4", "port": "7890", "username": "u", "password": "secret"},
+        {"id": "bad", "name": "ignored"},
+    ]}})
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, [response])
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    client = test_client
+
+    result = client.get("/api/sub2/proxies")
+
+    assert result.status_code == 200
+    assert result.json() == {"items": [{
+        "id": 7,
+        "name": "proxy-a",
+        "protocol": "http",
+        "host": "1.2.3.4",
+        "port": 7890,
+        "username": "u",
+    }]}
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/proxies?page=1&page_size=1000&status=active&sort_by=id&sort_order=asc"
 
 
 def chatgpt_session() -> dict:
@@ -244,6 +288,108 @@ def test_push_sub2_account_uses_default_proxy_and_creates_account(tmp_path, monk
     assert "notes" not in calls[1]["json"]
 
 
+def test_push_sub2_data_uses_default_proxy_and_selected_group(tmp_path, monkeypatch, test_client) -> None:
+    responses = [
+        httpx.Response(200, json={"data": {"items": [{
+            "id": 6,
+            "name": "proxy-6",
+            "protocol": "http",
+            "host": "127.0.0.1",
+            "port": 7891,
+            "username": "u",
+            "password": "p",
+        }]}}),
+        httpx.Response(200, json={"code": 0, "data": {"id": 102}}),
+    ]
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, responses)
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    client = test_client
+
+    response = client.post("/api/sub2/push-data", json={
+        "groupId": 15,
+        "data": {
+            "exported_at": "2026-06-08T00:00:00Z",
+            "proxies": [],
+            "accounts": [{
+                "name": "user@example.com",
+                "platform": "openai",
+                "type": "oauth",
+                "credentials": {
+                    "access_token": "access-token",
+                    "chatgpt_account_id": "account-id",
+                    "chatgpt_user_id": "user-id",
+                    "email": "user@example.com",
+                    "expires_at": "2026-06-08T00:00:00Z",
+                    "plan_type": "plus",
+                },
+                "extra": {
+                    "email": "user@example.com",
+                },
+                "auto_pause_on_expired": True,
+                "concurrency": 10,
+                "priority": 1,
+            }],
+        },
+    })
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is True
+    assert result["data"]["accounts"][0]["group_ids"] == [15]
+    assert result["data"]["accounts"][0]["proxy_key"] == "http|127.0.0.1|7891|u|p"
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc"
+    assert calls[1]["method"] == "POST"
+    assert calls[1]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+    assert calls[1]["json"]["proxy_id"] == 6
+    assert calls[1]["json"]["group_ids"] == [15]
+    assert calls[1]["json"]["confirm_mixed_channel_risk"] is True
+
+
+def test_push_sub2_data_uses_selected_proxy_id_without_default_lookup(tmp_path, monkeypatch, test_client) -> None:
+    responses = [
+        httpx.Response(200, json={"code": 0, "data": {"id": 103}}),
+    ]
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, responses)
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    client = test_client
+
+    response = client.post("/api/sub2/push-data", json={
+        "groupId": 16,
+        "proxyId": 42,
+        "data": {
+            "exported_at": "2026-06-08T00:00:00Z",
+            "proxies": [],
+            "accounts": [{
+                "name": "user@example.com",
+                "platform": "openai",
+                "type": "oauth",
+                "credentials": {
+                    "access_token": "access-token",
+                    "chatgpt_account_id": "account-id",
+                    "chatgpt_user_id": "user-id",
+                    "email": "user@example.com",
+                    "expires_at": "2026-06-08T00:00:00Z",
+                    "plan_type": "plus",
+                },
+                "extra": {"email": "user@example.com"},
+                "auto_pause_on_expired": True,
+                "concurrency": 10,
+                "priority": 1,
+            }],
+        },
+    })
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+    assert calls[0]["json"]["proxy_id"] == 42
+    assert calls[0]["json"]["group_ids"] == [16]
+
+
 def test_push_sub2_account_reuses_matching_proxy_without_create(tmp_path, monkeypatch, test_client) -> None:
     monkeypatch.setenv("SUB2_PROXY_TEMPLATE_JSON", '{"proxies":[{"proxy_key":"p1","name":"local","protocol":"http","host":"1.2.3.4","port":8080,"username":"u","password":"secret"}]}')
     responses = [
@@ -311,6 +457,7 @@ def test_push_sub2_account_via_auth_login_uses_openai_oauth_endpoints(tmp_path, 
             "accountId": "account-id",
             "planType": "free",
         }),
+        None,
         None,
         authorize,
     )

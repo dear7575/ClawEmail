@@ -13,10 +13,15 @@ logger = logging.getLogger(__name__)
 def push_openai_duck_address_to_sub2(body: OpenAiDuckPushBody) -> dict[str, Any]:
     """启动 Duck 地址推送到 Sub2API 的后台任务。"""
 
-    logger.info("API 推送 OpenAI Duck 地址到 Sub2：duckAddressId=%s groupId=%s", body.duck_address_id, body.group_id)
+    logger.info(
+        "API 推送 OpenAI Duck 地址到 Sub2：duckAddressId=%s groupId=%s proxyId=%s",
+        body.duck_address_id,
+        body.group_id,
+        body.proxy_id,
+    )
     return {
         "success": True,
-        **openai_push_job_service.start(body.duck_address_id, body.group_id),
+        **openai_push_job_service.start(body.duck_address_id, body.group_id, body.proxy_id),
     }
 
 

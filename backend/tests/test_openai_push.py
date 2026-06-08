@@ -209,6 +209,29 @@ def test_openai_duck_push_uses_saved_auth_json_and_sub2_proxy(tmp_path, monkeypa
     assert saved_address["sub2_push_email"] == "private@duck.com"
 
 
+def test_openai_duck_push_uses_configured_default_proxy_id(tmp_path, monkeypatch, test_client) -> None:
+    responses = [
+        httpx.Response(200, json={"code": 0, "data": {"id": 100}}),
+    ]
+    repository, settings, _mail_repository, _auth_service, calls = reset_openai_push_service(tmp_path, monkeypatch, responses)
+    settings.set("sub2.apiUrl", "https://sub2.example.com")
+    settings.set("sub2.apiKey", "adminkey")
+    settings.set("sub2.defaultGroupId", "9")
+    settings.set("sub2.defaultProxyId", "77")
+    address_id = create_duck_address_with_credentials(repository)
+
+    response = test_client.post("/api/openai/duck-push-sub2", json={"duckAddressId": address_id})
+
+    assert response.status_code == 200
+    started = response.json()
+    body = wait_openai_duck_push_job(test_client, started["jobId"])["result"]
+    assert body["success"] is True
+    assert body["data"]["accounts"][0]["group_ids"] == [9]
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+    assert calls[0]["json"]["proxy_id"] == 77
+
+
 def create_mailbox(mail_repository) -> None:
     mail_repository.upsert_mailbox({
         "id": "root@claw.163.com",

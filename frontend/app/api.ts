@@ -126,12 +126,22 @@ export type Sub2Settings = {
   hasApiKey: boolean;
   apiKeyPreview: string | null;
   defaultGroupId: number | null;
+  defaultProxyId: number | null;
   openAiAuthLoginEnabled: boolean;
 };
 
 export type Sub2Group = {
   id: number;
   name?: string;
+};
+
+export type Sub2Proxy = {
+  id: number;
+  name?: string | null;
+  protocol?: string | null;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
 };
 
 export type Sub2PushResult = {
@@ -539,6 +549,7 @@ export async function updateSub2Settings(input: {
   apiUrl?: string;
   apiKey?: string;
   defaultGroupId?: number | null;
+  defaultProxyId?: number | null;
   openAiAuthLoginEnabled?: boolean;
 }): Promise<Sub2Settings> {
   return requestJson<Sub2Settings>("/api/sub2/settings", {
@@ -552,29 +563,29 @@ export async function fetchSub2Groups(): Promise<Sub2Group[]> {
   return result.items;
 }
 
-export async function convertSub2Account(input: unknown): Promise<unknown> {
-  const result = await requestJson<{ data: unknown }>("/api/sub2/convert", {
-    method: "POST",
-    body: JSON.stringify({ input })
-  });
-  return result.data;
+export async function fetchSub2Proxies(): Promise<Sub2Proxy[]> {
+  const result = await requestJson<{ items: Sub2Proxy[] }>("/api/sub2/proxies");
+  return result.items;
 }
 
-export async function pushSub2Account(input: unknown, groupId: number): Promise<Sub2PushResult> {
-  return requestJson<Sub2PushResult>("/api/sub2/push", {
+export async function pushSub2Data(data: unknown, groupId: number, proxyId?: number | null): Promise<Sub2PushResult> {
+  return requestJson<Sub2PushResult>("/api/sub2/push-data", {
     method: "POST",
-    body: JSON.stringify({ input, groupId })
+    body: JSON.stringify({ data, groupId, proxyId })
   });
 }
 
 export async function pushOpenAiDuckAddressToSub2(
   duckAddressId: number,
   groupId?: number | null,
-  options?: { onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void> }
+  options?: {
+    proxyId?: number | null;
+    onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void>;
+  }
 ): Promise<Sub2PushResult & { email?: string }> {
   const started = await requestJson<OpenAiDuckPushJobStatus>("/api/openai/duck-push-sub2", {
     method: "POST",
-    body: JSON.stringify({ duckAddressId, groupId })
+    body: JSON.stringify({ duckAddressId, groupId, proxyId: options?.proxyId })
   });
   await options?.onPoll?.(started);
   return waitForOpenAiDuckPushJob(started.jobId, options);

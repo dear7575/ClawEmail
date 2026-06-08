@@ -1335,14 +1335,14 @@ a:hover {
 .dashboard-page,
 .connections-page,
 .duck-page,
-.account-push-page,
+.format-converter-page,
 .notifications-page,
 .settings-page {
     display: grid;
     gap: 16px;
 }
 
-.account-push-page {
+.format-converter-page {
     flex: 1;
     min-height: 0;
 }
@@ -1528,10 +1528,120 @@ a:hover {
     font-weight: 700;
 }
 
-.push-panel {
+.converter-toolbar {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+}
+
+.converter-format-tabs {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    height: 38px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+    padding: 2px;
+}
+
+.converter-format-tabs button {
+    min-width: 0;
+    min-height: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted-foreground);
+    padding: 0 8px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+    box-shadow: none;
+}
+
+.converter-format-tabs button.active {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    box-shadow: var(--shadow-blue);
+}
+
+.converter-actions,
+.converter-input-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.converter-actions button {
+    min-height: 35.5px;
+    height: 35.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding-block: 0;
+}
+
+.converter-input-actions button {
+    min-height: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding-block: 0;
+}
+
+.converter-actions .ui-select-trigger {
+    height: 34px;
+    min-height: 34px;
+}
+
+.converter-input-actions .ui-select-trigger {
+    height: 38px;
+    min-height: 38px;
+}
+
+.converter-actions .ui-select-trigger > span:first-child {
+    flex: 1 1 auto;
+    text-align: left;
+}
+
+.converter-actions .ui-select-icon {
+    margin-left: auto;
+}
+
+.converter-actions svg,
+.converter-input-actions svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.converter-group-select {
+    width: 142px;
+}
+
+.converter-proxy-select {
+    width: 166px;
+}
+
+.converter-workspace {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-height: 0;
+}
+
+.converter-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
     min-height: 0;
     border: 1px solid var(--border);
     border-radius: 16px;
@@ -1540,107 +1650,231 @@ a:hover {
     padding: 16px;
 }
 
-.push-head,
-.push-editor-head,
-.push-actions {
+.converter-panel-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
 }
 
-.push-head {
-    align-items: flex-start;
-}
-
-.notify-head > div,
-.push-head > div {
-    min-width: 0;
-}
-
-.push-head strong {
+.converter-panel-head strong {
     display: block;
     font-size: 16px;
 }
 
-.push-head p {
+.converter-panel-head p {
     margin: 5px 0 0;
-    max-width: 100ch;
     color: var(--muted-foreground);
     font-size: 12px;
 }
 
-.push-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    min-height: 0;
-}
-
-.push-editor {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 8px;
-    min-width: 0;
-    min-height: 0;
-}
-
-.push-editor-head span {
-    color: var(--muted-foreground);
-    font-size: 12px;
-    font-weight: 850;
-}
-
-.push-textarea {
-    min-height: clamp(560px, calc(100vh - 340px), 860px);
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.55;
-    white-space: pre;
-    overflow: auto;
-}
-
-.push-textarea.preview {
+.session-guide-box,
+.converter-notice,
+.converter-issues {
+    border: 1px solid var(--border);
+    border-radius: 14px;
     background: var(--muted);
+    padding: 12px;
 }
 
-.push-actions span {
-    min-width: 0;
+.session-guide-box {
+    border-left: 4px solid var(--primary);
+}
+
+.session-guide-box strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--foreground);
+}
+
+.session-guide-box p,
+.converter-notice {
+    margin: 0;
     color: var(--muted-foreground);
     font-size: 12px;
-    font-weight: 700;
+    line-height: 1.5;
+}
+
+.session-guide-box a {
+    margin: 0 4px;
+    color: var(--primary);
+    font-family: var(--font-mono);
+    font-weight: 800;
     overflow-wrap: anywhere;
 }
 
-.push-group-select {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-width: min(100%, 320px);
+.session-guide-box .danger-copy {
+    margin-top: 6px;
+    color: var(--danger);
+    font-weight: 800;
 }
 
-.push-group-select span {
+.hidden-file-input {
+    display: none;
+}
+
+.converter-textarea {
+    min-height: 430px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card-strong);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    padding: 12px;
+    white-space: pre;
+}
+
+.converter-textarea.preview {
+    background: color-mix(in srgb, var(--card-strong) 78%, var(--muted));
+}
+
+.converter-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.converter-summary > div {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--muted);
+    padding: 10px;
+}
+
+.converter-summary strong {
+    display: block;
+    overflow: hidden;
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 18px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.push-group-select .push-group-trigger {
-    min-width: 200px;
-    max-width: 320px;
+.converter-summary span {
+    display: block;
+    margin-top: 5px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 800;
 }
 
-.push-group-empty {
+.converter-sub2-state {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--muted);
     color: var(--muted-foreground);
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.converter-sub2-state span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.converter-sub2-state.ok {
+    border-color: rgba(16, 185, 129, 0.24);
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.converter-sub2-state.warn {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: var(--warning-soft);
+    color: var(--warning);
+}
+
+.converter-sub2-state button {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 5px 10px;
+}
+
+.converter-account-table {
+    overflow: auto;
+    max-height: 220px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card-strong);
+}
+
+.converter-account-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.9fr) minmax(160px, 1.2fr) minmax(130px, 0.82fr) minmax(110px, 0.76fr);
+    gap: 10px;
+    align-items: center;
+    min-width: 680px;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 9px 10px;
+}
+
+.converter-account-row:last-child {
+    border-bottom: 0;
+}
+
+.converter-account-row.head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 850;
+}
+
+.converter-account-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.converter-empty-row {
+    padding: 18px 12px;
+    color: var(--muted-foreground);
+    text-align: center;
+}
+
+.converter-issues {
+    display: grid;
+    gap: 4px;
+    border-color: rgba(220, 38, 38, 0.24);
+    background: var(--danger-soft);
+    color: var(--danger);
     font-size: 12px;
     font-weight: 700;
 }
 
-.push-actions > div {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+.converter-status {
+    min-height: 20px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.converter-status.ok {
+    color: var(--success);
+}
+
+.converter-status.error {
+    color: var(--danger);
+}
+
+.notify-head > div {
+    min-width: 0;
 }
 
 .connection-bind {
@@ -2980,8 +3214,13 @@ a:hover {
         grid-template-columns: minmax(220px, 1fr) minmax(220px, 320px);
     }
 
-    .push-grid {
+    .converter-toolbar,
+    .converter-workspace {
         grid-template-columns: 1fr;
+    }
+
+    .converter-actions {
+        justify-content: flex-start;
     }
 
     .connection-bind .actions {
@@ -3233,7 +3472,7 @@ a:hover {
     .ui-select-trigger {
         width: 100%;
         min-width: 0;
-        height: 38px;
+        height: 34px;
     }
 
     .ui-select-content {
@@ -3295,6 +3534,75 @@ a:hover {
     .setting-row {
         grid-template-columns: 1fr;
         align-items: flex-start;
+    }
+
+    .converter-format-tabs {
+        display: flex;
+        grid-template-columns: none;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .converter-format-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .converter-format-tabs button {
+        flex: 0 0 auto;
+        min-width: 76px;
+        overflow-wrap: normal;
+        padding-inline: 10px;
+        white-space: nowrap;
+    }
+
+    .converter-input-actions {
+        align-items: stretch;
+    }
+
+    .converter-actions {
+        align-items: stretch;
+        justify-content: flex-start;
+    }
+
+    .converter-input-actions button,
+    .converter-actions button {
+        flex: 1 1 132px;
+    }
+
+    .converter-group-select {
+        width: 100%;
+    }
+
+    .converter-proxy-select {
+        width: 100%;
+    }
+
+    .converter-sub2-state {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .converter-sub2-state span {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .converter-panel {
+        border-radius: 18px;
+        padding: 13px;
+    }
+
+    .converter-textarea {
+        min-height: 320px;
+    }
+
+    .converter-account-table {
+        max-width: 100%;
     }
 
     .settings-actions {

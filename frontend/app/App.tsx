@@ -1,6 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from "react";
 import {CommunicationRulesDrawer} from "./components/CommunicationRulesDrawer";
 import {ComposeDrawer} from "./components/ComposeDrawer";
+import {FormatConverterView} from "./components/FormatConverterView";
 import {InboxView} from "./components/InboxView";
 import {ListenersDrawer} from "./components/ListenersDrawer";
 import {MailboxesView} from "./components/MailboxesView";
@@ -13,7 +14,6 @@ import {parseServerTime} from "./time";
 import {LogOut, Menu, Pencil, Send, Trash2, X} from "lucide-react";
 import {
     type ClawAuthStatus,
-    convertSub2Account,
     createDuckAccount,
     createEventSource,
     createMailbox,
@@ -35,6 +35,7 @@ import {
     fetchMailboxes,
     fetchMails,
     fetchSub2Groups,
+    fetchSub2Proxies,
     fetchSub2Settings,
     fetchSystemNetworkSettings,
     fetchTelegramSettings,
@@ -46,12 +47,13 @@ import {
     type MailDetail,
     type MailSummary,
     pushOpenAiDuckAddressToSub2,
-    pushSub2Account,
+    pushSub2Data,
     refreshConnection,
     sendConnectionLoginCode,
     sendTelegramNotification,
     setAdminPassword,
     type Sub2Group,
+    type Sub2Proxy,
     type Sub2Settings,
     type SystemNetworkSettings,
     type TelegramSettings,
@@ -66,7 +68,7 @@ import {
     verifyConnectionLoginCode
 } from "./api";
 
-type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "accountPush" | "notifications" | "settings";
+type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "formatConvert" | "notifications" | "settings";
 type ToastItem = {
     id: number;
     type: "success" | "error";
@@ -103,7 +105,7 @@ function readInitialView(): View {
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
     return saved === "connections" || saved === "mailboxes" || saved === "inbox" || saved === "settings"
     || saved === "notifications"
-    || saved === "accountPush"
+    || saved === "formatConvert"
     || saved === "duck"
         ? saved
         : "dashboard";
@@ -116,7 +118,7 @@ function titleForView(view: View): string {
         mailboxes: "Claw 邮箱",
         duck: "Duck 邮箱",
         inbox: "收件管理",
-        accountPush: "账号推送",
+        formatConvert: "格式转换",
         notifications: "消息通知",
         settings: "系统设置"
     };
@@ -141,6 +143,11 @@ function statusLabel(connection: ClawAuthStatus): string {
     if (connection.connected) return "在线";
     if (connection.status === "disconnected") return "已断开";
     return "未完整";
+}
+
+function formatSub2ProxyLabel(proxy: Sub2Proxy): string {
+    const name = proxy.name?.trim() || proxy.host || "代理";
+    return `${name} (#${proxy.id})`;
 }
 
 function normalizeLoginName(value: string): string {
@@ -264,6 +271,7 @@ export function App() {
         hasApiKey: false,
         apiKeyPreview: null,
         defaultGroupId: null,
+        defaultProxyId: null,
         openAiAuthLoginEnabled: true
     });
     const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
@@ -275,13 +283,16 @@ export function App() {
     const [settingsBusy, setSettingsBusy] = useState(false);
     const [telegramMessage, setTelegramMessage] = useState("");
     const [telegramSendBusy, setTelegramSendBusy] = useState(false);
-    const [sub2SourceJson, setSub2SourceJson] = useState("");
-    const [sub2PreviewJson, setSub2PreviewJson] = useState("");
     const [sub2Groups, setSub2Groups] = useState<Sub2Group[]>([]);
     const [selectedSub2GroupId, setSelectedSub2GroupId] = useState("");
     const [sub2GroupsBusy, setSub2GroupsBusy] = useState(false);
-    const [sub2Busy, setSub2Busy] = useState(false);
+    const [sub2Proxies, setSub2Proxies] = useState<Sub2Proxy[]>([]);
+    const [selectedSub2ProxyId, setSelectedSub2ProxyId] = useState("");
+    const [sub2ProxiesBusy, setSub2ProxiesBusy] = useState(false);
+    const [formatConvertPushBusy, setFormatConvertPushBusy] = useState(false);
     const [sub2DefaultGroupIdInput, setSub2DefaultGroupIdInput] = useState("");
+    const [sub2DefaultProxyIdInput, setSub2DefaultProxyIdInput] = useState("");
+    const [sub2DefaultProxyTouched, setSub2DefaultProxyTouched] = useState(false);
     const [openAiPushBusyDuckAddressId, setOpenAiPushBusyDuckAddressId] = useState<number | null>(null);
     const [openAiPasswordCopyBusyDuckAddressId, setOpenAiPasswordCopyBusyDuckAddressId] = useState<number | null>(null);
     const [duckAddressEditorAddress, setDuckAddressEditorAddress] = useState<DuckAddress | null>(null);
@@ -687,9 +698,15 @@ export function App() {
     ]);
 
     useEffect(() => {
-        if (!password || view !== "accountPush") return;
+        if (!password || view !== "formatConvert") return;
         if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
         loadSub2Groups().catch(reportError);
+    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
+
+    useEffect(() => {
+        if (!password || view !== "formatConvert") return;
+        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
+        loadSub2Proxies().catch(reportError);
     }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
 
     useEffect(() => {
@@ -949,6 +966,7 @@ export function App() {
                     apiUrl: sub2ApiUrlInput.trim(),
                     apiKey: sub2ApiKeyInput.trim() || undefined,
                     defaultGroupId: sub2DefaultGroupIdInput ? Number(sub2DefaultGroupIdInput) : null,
+                    defaultProxyId: sub2DefaultProxyIdInput ? Number(sub2DefaultProxyIdInput) : null,
                     openAiAuthLoginEnabled: sub2OpenAiAuthLoginEnabledInput
                 })
             ]);
@@ -990,6 +1008,8 @@ export function App() {
         setSub2ApiUrlInput(settings.apiUrl);
         setSub2ApiKeyInput("");
         setSub2DefaultGroupIdInput(settings.defaultGroupId ? String(settings.defaultGroupId) : "");
+        setSub2DefaultProxyIdInput(settings.defaultProxyId ? String(settings.defaultProxyId) : "");
+        setSub2DefaultProxyTouched(false);
         setSub2OpenAiAuthLoginEnabledInput(settings.openAiAuthLoginEnabled);
     }
 
@@ -1027,46 +1047,51 @@ export function App() {
         }
     }
 
-    function parseSub2SourceInput(): unknown {
-        if (!sub2SourceJson.trim()) {
-            throw new Error("请输入账号 JSON");
-        }
-        return JSON.parse(sub2SourceJson);
-    }
-
-    async function handleConvertSub2Account() {
-        setSub2Busy(true);
+    async function loadSub2Proxies() {
+        setSub2ProxiesBusy(true);
         try {
-            const data = await convertSub2Account(parseSub2SourceInput());
-            setSub2PreviewJson(JSON.stringify(data, null, 2));
-            showStatus("账号 JSON 已转换");
+            const proxies = await fetchSub2Proxies();
+            setSub2Proxies(proxies);
+            setSelectedSub2ProxyId((current) => {
+                if (current && proxies.some((proxy) => String(proxy.id) === current)) return current;
+                return "";
+            });
+            setSub2DefaultProxyIdInput((current) => {
+                if (sub2DefaultProxyTouched) {
+                    return current && proxies.some((proxy) => String(proxy.id) === current) ? current : "";
+                }
+                if (current && proxies.some((proxy) => String(proxy.id) === current)) return current;
+                const defaultProxyId = sub2Settings.defaultProxyId ? String(sub2Settings.defaultProxyId) : "";
+                if (defaultProxyId && proxies.some((proxy) => String(proxy.id) === defaultProxyId)) return defaultProxyId;
+                return "";
+            });
         } catch (err) {
+            setSub2Proxies([]);
+            setSelectedSub2ProxyId("");
+            setSub2DefaultProxyIdInput("");
             reportError(err);
         } finally {
-            setSub2Busy(false);
+            setSub2ProxiesBusy(false);
         }
     }
 
-    async function handlePushSub2Account() {
-        if (!sub2Settings.defaultGroupId) {
-            showError("请先在系统设置里选择 Sub2 默认推送分组");
-            return;
-        }
-        setSub2Busy(true);
+    async function handlePushFormatConvertedSub2Data(data: unknown, groupId: number, proxyId?: number | null) {
+        setFormatConvertPushBusy(true);
         try {
-            const result = await pushSub2Account(parseSub2SourceInput(), sub2Settings.defaultGroupId);
-            setSub2PreviewJson(JSON.stringify(result.data, null, 2));
+            const result = await pushSub2Data(data, groupId, proxyId);
             showStatus("账号已推送到 Sub2API");
+            return result;
         } catch (err) {
             reportError(err);
+            throw err;
         } finally {
-            setSub2Busy(false);
+            setFormatConvertPushBusy(false);
         }
     }
 
     async function handlePushOpenAiDuckAddressToSub2(address: DuckAddress) {
         if (!sub2Settings.defaultGroupId) {
-            showError("请先在系统设置里选择 Sub2 默认推送分组");
+            showError("请先在系统设置里选择 OpenAI 邮箱默认推送分组");
             return;
         }
         if (!address.forwarding_mailbox_email) {
@@ -1078,9 +1103,11 @@ export function App() {
             const refreshDuckAddresses = async () => {
                 await loadDuckAddresses(selectedDuckAccountId).catch(reportError);
             };
-            const result = await pushOpenAiDuckAddressToSub2(address.id, sub2Settings.defaultGroupId, {
-                onPoll: refreshDuckAddresses
-            });
+            const result = await pushOpenAiDuckAddressToSub2(
+                address.id,
+                sub2Settings.defaultGroupId,
+                {onPoll: refreshDuckAddresses}
+            );
             await loadDuckAddresses(selectedDuckAccountId);
             const modeText = result.pushMode === "sub2_auth"
                 ? "Sub2 授权创建"
@@ -1461,8 +1488,8 @@ export function App() {
                         <span>Duck 邮箱</span>
                         <span className="count">{duckAddressCount}</span>
                     </button>
-                    <button className={view === "accountPush" ? "active" : ""} onClick={() => switchView("accountPush")}>
-                        <span>账号推送</span>
+                    <button className={view === "formatConvert" ? "active" : ""} onClick={() => switchView("formatConvert")}>
+                        <span>格式转换</span>
                     </button>
                     <button className={view === "notifications" ? "active" : ""}
                             onClick={() => switchView("notifications")}>
@@ -1976,101 +2003,23 @@ export function App() {
                     />
                 )}
 
-                {view === "accountPush" && (
-                    <section className="account-push-page">
-                        <div className="push-panel">
-                            <div className="push-head">
-                                <div>
-                                    <strong>ChatGPT 账号推送</strong>
-                                    <p>粘贴 https://chatgpt.com/api/auth/session 结构的账号 JSON，系统会转换成 Sub2
-                                        数据格式后推送到 Sub2API。</p>
-                                </div>
-                                <span
-                                    className={`tag ${sub2Settings.apiUrl && sub2Settings.hasApiKey ? "ok" : "muted"}`}>
-                                    <span
-                                        className={`dot ${sub2Settings.apiUrl && sub2Settings.hasApiKey ? "live" : ""}`}/>
-                                    {sub2Settings.apiUrl && sub2Settings.hasApiKey ? "已配置" : "未配置"}
-                                </span>
-                            </div>
-                            <div className="push-grid">
-                                <div className="push-editor">
-                                    <div className="push-editor-head">
-                                        <span>原始 JSON</span>
-                                        <button
-                                            onClick={() => {
-                                                setSub2SourceJson("");
-                                                setSub2PreviewJson("");
-                                            }}
-                                            disabled={sub2Busy || ( !sub2SourceJson && !sub2PreviewJson )}
-                                        >
-                                            清空
-                                        </button>
-                                    </div>
-                                    <textarea
-                                        className="push-textarea"
-                                        value={sub2SourceJson}
-                                        onChange={(event) => setSub2SourceJson(event.target.value)}
-                                        placeholder="粘贴 https://chatgpt.com/api/auth/session 结构的账号 JSON 内容"
-                                        spellCheck={false}
-                                        disabled={sub2Busy}
-                                    />
-                                </div>
-                                <div className="push-editor">
-                                    <div className="push-editor-head">
-                                        <span>Sub2 JSON 预览</span>
-                                        <button
-                                            onClick={() => sub2PreviewJson && navigator.clipboard.writeText(sub2PreviewJson)}
-                                            disabled={!sub2PreviewJson}
-                                        >
-                                            复制
-                                        </button>
-                                    </div>
-                                    <textarea
-                                        className="push-textarea preview"
-                                        value={sub2PreviewJson}
-                                        readOnly
-                                        placeholder="点击转换后显示 toSub2.json 格式"
-                                        spellCheck={false}
-                                    />
-                                </div>
-                            </div>
-                            <div className="push-actions">
-                                <span>
-                                    {sub2Settings.apiUrl
-                                        ? `推送地址：${sub2Settings.apiUrl}`
-                                        : "请先在系统设置里配置 Sub2API 地址和 APIKey"}
-                                </span>
-                                <span>
-                                    默认分组：{sub2Settings.defaultGroupId ? `#${sub2Settings.defaultGroupId}` : "未设置"}
-                                </span>
-                                <div>
-                                    <button
-                                        onClick={() => setView("settings")}
-                                        disabled={sub2Busy}
-                                    >
-                                        设置默认分组
-                                    </button>
-                                    <button onClick={handleConvertSub2Account}
-                                            disabled={sub2Busy || !sub2SourceJson.trim()}>
-                                        {sub2Busy ? "处理中" : "转换预览"}
-                                    </button>
-                                    <button
-                                        className="primary"
-                                        onClick={handlePushSub2Account}
-                                        disabled={sub2Busy || !sub2SourceJson.trim() || !sub2Settings.defaultGroupId}
-                                    >
-                                        {sub2Busy ? "推送中" : "推送账号"}
-                                    </button>
-                                </div>
-                            </div>
-                            {( !sub2Settings.apiUrl || !sub2Settings.hasApiKey ) && (
-                                <div className="empty-state">
-                                    <span className="big">Sub2API 尚未配置完整</span>
-                                    请先到系统设置里填写 Sub2API 地址和 APIKey。
-                                </div>
-                            )}
-                        </div>
-                    </section>
+                {view === "formatConvert" && (
+                    <FormatConverterView
+                        sub2Settings={sub2Settings}
+                        sub2Groups={sub2Groups}
+                        selectedSub2GroupId={selectedSub2GroupId}
+                        sub2GroupsBusy={sub2GroupsBusy}
+                        sub2Proxies={sub2Proxies}
+                        selectedSub2ProxyId={selectedSub2ProxyId}
+                        sub2ProxiesBusy={sub2ProxiesBusy}
+                        pushBusy={formatConvertPushBusy}
+                        onSelectedSub2GroupIdChange={setSelectedSub2GroupId}
+                        onSelectedSub2ProxyIdChange={setSelectedSub2ProxyId}
+                        onRefreshSub2Groups={loadSub2Groups}
+                        onRefreshSub2Proxies={loadSub2Proxies}
+                        onPushSub2Data={handlePushFormatConvertedSub2Data}
+                        onOpenSettings={() => switchView("settings")}
+                    />
                 )}
 
                 {view === "notifications" && (
@@ -2360,14 +2309,19 @@ export function App() {
                             </div>
                             <div className="setting-row">
                                 <span>
-                                    <strong>Sub2 默认推送分组</strong>
-                                    <small>账号推送和 Claw 邮箱一键推送都会使用该分组，保存后无需每次选择。</small>
+                                    <strong>OpenAI 邮箱默认推送分组</strong>
+                                    <small>Duck 邮箱列表的一键推送会使用该分组；格式转换页可在推送前单独选择分组和代理。</small>
                                 </span>
                                 <div className="setting-select-control">
                                     <Select
                                         value={sub2DefaultGroupIdInput}
                                         onValueChange={setSub2DefaultGroupIdInput}
-                                        disabled={settingsBusy || sub2GroupsBusy || !sub2Groups.length}
+                                        onOpenChange={(open) => {
+                                            if (open && sub2ApiUrlInput.trim() && sub2Settings.hasApiKey && !sub2GroupsBusy) {
+                                                loadSub2Groups().catch(reportError);
+                                            }
+                                        }}
+                                        disabled={settingsBusy || sub2GroupsBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
                                     >
                                         <SelectTrigger className="toolbar-select setting-select-trigger">
                                             <SelectValue placeholder={sub2GroupsBusy ? "加载中" : "选择分组"} />
@@ -2380,13 +2334,41 @@ export function App() {
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                    <button
-                                        onClick={loadSub2Groups}
-                                        disabled={settingsBusy || sub2GroupsBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
-                                    >
-                                        {sub2GroupsBusy ? "刷新中" : "刷新分组"}
-                                    </button>
                                     {!sub2GroupsBusy && !sub2Groups.length && <span>暂无可用分组</span>}
+                                </div>
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>OpenAI 邮箱默认代理</strong>
+                                    <small>Duck 邮箱列表的一键推送会优先绑定该代理；留空时按 Sub2 可用代理自动选择。</small>
+                                </span>
+                                <div className="setting-select-control">
+                                    <Select
+                                        value={sub2DefaultProxyIdInput || "__auto"}
+                                        onValueChange={(value) => {
+                                            setSub2DefaultProxyTouched(true);
+                                            setSub2DefaultProxyIdInput(value === "__auto" ? "" : value);
+                                        }}
+                                        onOpenChange={(open) => {
+                                            if (open && sub2ApiUrlInput.trim() && sub2Settings.hasApiKey && !sub2ProxiesBusy) {
+                                                loadSub2Proxies().catch(reportError);
+                                            }
+                                        }}
+                                        disabled={settingsBusy || sub2ProxiesBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
+                                    >
+                                        <SelectTrigger className="toolbar-select setting-select-trigger">
+                                            <SelectValue placeholder={sub2ProxiesBusy ? "加载中" : "选择代理"} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__auto">自动选择代理</SelectItem>
+                                            {sub2Proxies.map((proxy) => (
+                                                <SelectItem key={proxy.id} value={String(proxy.id)}>
+                                                    {formatSub2ProxyLabel(proxy)}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {!sub2ProxiesBusy && !sub2Proxies.length && <span>暂无可用代理</span>}
                                 </div>
                             </div>
                             <label className="setting-row">

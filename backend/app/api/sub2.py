@@ -5,7 +5,9 @@ from fastapi import APIRouter
 from app.services.sub2 import (
     Sub2AccountPayload,
     Sub2ConvertResponse,
+    Sub2DataPayload,
     Sub2GroupsResponse,
+    Sub2ProxiesResponse,
     Sub2PushResponse,
     Sub2PublicSettings,
     Sub2SettingsUpdate,
@@ -42,6 +44,17 @@ def get_sub2_groups() -> Sub2GroupsResponse:
     ])
 
 
+@router.get("/api/sub2/proxies", response_model=Sub2ProxiesResponse)
+def get_sub2_proxies() -> Sub2ProxiesResponse:
+    """获取 Sub2 可用代理列表。"""
+
+    logger.info("API 获取 Sub2 代理")
+    return Sub2ProxiesResponse(items=[
+        proxy.model_dump() if hasattr(proxy, "model_dump") else proxy
+        for proxy in sub2_service.fetch_proxies()
+    ])
+
+
 @router.post("/api/sub2/convert", response_model=Sub2ConvertResponse)
 def convert_sub2_account(body: Sub2AccountPayload) -> Sub2ConvertResponse:
     """转换 ChatGPT session JSON 为 Sub2 导入数据。"""
@@ -55,4 +68,14 @@ def push_sub2_account(body: Sub2AccountPayload) -> Sub2PushResponse:
 
     logger.info("API 推送 Sub2 账号：groupId=%s", body.group_id)
     result = sub2_service.push_account(body.input, body.group_id)
+    return Sub2PushResponse(success=True, **result)
+
+
+@router.post("/api/sub2/push-data", response_model=Sub2PushResponse)
+def push_sub2_data(body: Sub2DataPayload) -> Sub2PushResponse:
+    """推送已转换的 Sub2 导入数据到 Sub2API。"""
+
+    account_count = len(body.data.get("accounts", []))
+    logger.info("API 推送已转换 Sub2 数据：groupId=%s proxyId=%s accountCount=%s", body.group_id, body.proxy_id, account_count)
+    result = sub2_service.push_data(body.data, body.group_id, body.proxy_id)
     return Sub2PushResponse(success=True, **result)

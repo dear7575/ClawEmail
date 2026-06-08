@@ -91,6 +91,7 @@ class OpenAiDuckPushBody(BaseModel):
 
     duck_address_id: int = Field(alias="duckAddressId", gt=0)
     group_id: int | None = Field(default=None, alias="groupId", gt=0)
+    proxy_id: int | None = Field(default=None, alias="proxyId", gt=0)
 
 
 class OpenAiPushService:
@@ -203,19 +204,21 @@ class OpenAiPushService:
         login: OpenAiLoginResult,
         data: dict[str, Any],
         group_id: int | None,
+        proxy_id: int | None,
     ) -> dict[str, Any]:
         """优先使用 Sub2 授权登录推送，遇到手机号步骤时降级为 OAuth token 推送。"""
 
         settings = sub2_service.get_settings()
         if not settings.open_ai_auth_login_enabled:
             logger.info("Sub2 授权登录分支已关闭，改用 OAuth token 推送：email=%s", login.token.get("email"))
-            fallback = sub2_service.push_data(data, group_id)
+            fallback = sub2_service.push_data(data, group_id, proxy_id)
             return {**fallback, "pushMode": "oauth_token"}
         try:
             logger.info("开始 Sub2 授权登录分支推送：email=%s", login.token.get("email"))
             result = sub2_service.push_data_via_auth_login(
                 data,
                 group_id,
+                proxy_id,
                 lambda request: self.authorize_sub2_auth_login_with_current_session(request, login),
             )
             logger.info("Sub2 授权登录分支推送完成：email=%s", login.token.get("email"))
@@ -225,21 +228,35 @@ class OpenAiPushService:
                 raise
             message = str(exc)
             logger.warning("Sub2 授权登录分支降级：email=%s reason=%s", login.token.get("email"), message)
-            fallback = sub2_service.push_data(data, group_id)
+            fallback = sub2_service.push_data(data, group_id, proxy_id)
             return {**fallback, "pushMode": "fallback_oauth_token", "fallbackReason": message}
 
-    def push_duck_address_to_sub2(self, duck_address_id: int, group_id: int | None = None) -> dict[str, Any]:
+    def resolve_default_proxy_id(self, proxy_id: int | None = None) -> int | None:
+        """解析 Duck 一键推送使用的默认 Sub2 代理 ID。"""
+
+        if proxy_id is not None:
+            return proxy_id
+        return sub2_service.get_settings().default_proxy_id
+
+    def push_duck_address_to_sub2(
+        self,
+        duck_address_id: int,
+        group_id: int | None = None,
+        proxy_id: int | None = None,
+    ) -> dict[str, Any]:
         """将 Duck 地址登录 OpenAI 后推送到 Sub2。
 
         参数:
             duck_address_id: 本地 Duck 地址 ID。
             group_id: 可选 Sub2 分组 ID；为空时使用默认分组。
+            proxy_id: 可选 Sub2 代理 ID；为空时使用默认代理或自动解析。
 
         返回:
             推送结果、推送模式、降级原因和目标邮箱。
         """
 
-        logger.info("开始推送 Duck OpenAI 凭据到 Sub2：duckAddressId=%s groupId=%s", duck_address_id, group_id)
+        resolved_proxy_id = self.resolve_default_proxy_id(proxy_id)
+        logger.info("开始推送 Duck OpenAI 凭据到 Sub2：duckAddressId=%s groupId=%s proxyId=%s", duck_address_id, group_id, resolved_proxy_id)
         address = self.require_active_duck_address(duck_address_id)
         saved_token = self.load_saved_token(address)
         login: OpenAiLoginResult | None = None
@@ -258,10 +275,10 @@ class OpenAiPushService:
             build_sub2_push_notes(address, token, push_mode),
         )
         if login:
-            result = self.push_prepared_openai_account_to_sub2(login, data, group_id)
+            result = self.push_prepared_openai_account_to_sub2(login, data, group_id, resolved_proxy_id)
             push_mode = result["pushMode"]
         else:
-            result = {**sub2_service.push_data(data, group_id), "pushMode": push_mode}
+            result = {**sub2_service.push_data(data, group_id, resolved_proxy_id), "pushMode": push_mode}
         push_email = token.get("email") or address["address"]
         self.repository.mark_sub2_pushed(duck_address_id, push_mode, str(push_email))
         logger.info("Duck OpenAI 凭据推送完成：duckAddressId=%s email=%s", duck_address_id, push_email)
@@ -293,7 +310,7 @@ class OpenAiDuckPushJobService:
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, Any]] = {}
 
-    def start(self, duck_address_id: int, group_id: int | None = None) -> dict[str, Any]:
+    def start(self, duck_address_id: int, group_id: int | None = None, proxy_id: int | None = None) -> dict[str, Any]:
         """启动 Duck 推送后台任务并立即返回任务状态。"""
 
         job_id = uuid.uuid4().hex
@@ -303,6 +320,7 @@ class OpenAiDuckPushJobService:
             "status": "running",
             "duckAddressId": duck_address_id,
             "groupId": group_id,
+            "proxyId": proxy_id,
             "createdAt": now,
             "updatedAt": now,
             "result": None,
@@ -314,7 +332,7 @@ class OpenAiDuckPushJobService:
             snapshot = dict(job)
         thread = threading.Thread(
             target=self._run,
-            args=(job_id, duck_address_id, group_id),
+            args=(job_id, duck_address_id, group_id, proxy_id),
             name=f"openai-duck-push-{job_id[:8]}",
             daemon=True,
         )
@@ -329,11 +347,11 @@ class OpenAiDuckPushJobService:
             job = self._jobs.get(job_id)
             return dict(job) if job else None
 
-    def _run(self, job_id: str, duck_address_id: int, group_id: int | None) -> None:
+    def _run(self, job_id: str, duck_address_id: int, group_id: int | None, proxy_id: int | None) -> None:
         """执行后台推送并写回任务状态。"""
 
         try:
-            result = self.push_service.push_duck_address_to_sub2(duck_address_id, group_id)
+            result = self.push_service.push_duck_address_to_sub2(duck_address_id, group_id, proxy_id)
             self._finish(job_id, "succeeded", result={"success": True, **result})
         except Exception as exc:
             logger.exception("Duck OpenAI 凭据后台推送失败：jobId=%s duckAddressId=%s", job_id, duck_address_id)

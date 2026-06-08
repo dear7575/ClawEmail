@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 API_URL_KEY = "sub2.apiUrl"
 API_KEY_KEY = "sub2.apiKey"
 DEFAULT_GROUP_ID_KEY = "sub2.defaultGroupId"
+DEFAULT_PROXY_ID_KEY = "sub2.defaultProxyId"
 OPENAI_AUTH_LOGIN_ENABLED_KEY = "sub2.openAiAuthLoginEnabled"
 
 
@@ -28,6 +29,7 @@ class Sub2Settings(BaseModel):
     api_url: str = Field(default="", alias="apiUrl")
     api_key: str = Field(default="", alias="apiKey")
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    default_proxy_id: int | None = Field(default=None, alias="defaultProxyId")
     open_ai_auth_login_enabled: bool = Field(default=True, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -40,6 +42,7 @@ class Sub2PublicSettings(BaseModel):
     has_api_key: bool = Field(default=False, alias="hasApiKey")
     api_key_preview: str | None = Field(default=None, alias="apiKeyPreview")
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    default_proxy_id: int | None = Field(default=None, alias="defaultProxyId")
     open_ai_auth_login_enabled: bool = Field(default=True, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -51,6 +54,7 @@ class Sub2SettingsUpdate(BaseModel):
     api_url: str | None = Field(default=None, alias="apiUrl", max_length=500)
     api_key: str | None = Field(default=None, alias="apiKey", max_length=500)
     default_group_id: int | None = Field(default=None, alias="defaultGroupId")
+    default_proxy_id: int | None = Field(default=None, alias="defaultProxyId")
     open_ai_auth_login_enabled: bool | None = Field(default=None, alias="openAiAuthLoginEnabled")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -75,6 +79,17 @@ class Sub2SettingsUpdate(BaseModel):
             raise ValueError("Sub2 默认分组 ID 无效")
         return value
 
+    @field_validator("default_proxy_id")
+    @classmethod
+    def validate_proxy_id(cls, value: int | None) -> int | None:
+        """校验 Sub2 默认代理 ID 必须为正整数。"""
+
+        if value is None:
+            return None
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError("Sub2 默认代理 ID 无效")
+        return value
+
 
 class Sub2Group(BaseModel):
     """Sub2API 分组摘要。"""
@@ -83,10 +98,27 @@ class Sub2Group(BaseModel):
     name: str | None = None
 
 
+class Sub2Proxy(BaseModel):
+    """Sub2API 代理摘要。"""
+
+    id: int
+    name: str | None = None
+    protocol: str | None = None
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+
+
 class Sub2GroupsResponse(BaseModel):
     """Sub2API 分组列表响应。"""
 
     items: list[Sub2Group]
+
+
+class Sub2ProxiesResponse(BaseModel):
+    """Sub2API 代理列表响应。"""
+
+    items: list[Sub2Proxy]
 
 
 class Sub2AccountPayload(BaseModel):
@@ -106,6 +138,48 @@ class Sub2AccountPayload(BaseModel):
             return None
         if isinstance(value, bool) or value <= 0:
             raise ValueError("Sub2 默认分组 ID 无效")
+        return value
+
+
+class Sub2DataPayload(BaseModel):
+    """Sub2 已转换导入数据推送请求体。"""
+
+    data: dict[str, Any]
+    group_id: int | None = Field(default=None, alias="groupId")
+    proxy_id: int | None = Field(default=None, alias="proxyId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: int | None) -> int | None:
+        """校验本次推送指定的分组 ID 必须为正整数。"""
+
+        if value is None:
+            return None
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError("Sub2 默认分组 ID 无效")
+        return value
+
+    @field_validator("proxy_id")
+    @classmethod
+    def validate_proxy_id(cls, value: int | None) -> int | None:
+        """校验本次推送指定的代理 ID 必须为正整数。"""
+
+        if value is None:
+            return None
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError("Sub2 代理 ID 无效")
+        return value
+
+    @field_validator("data")
+    @classmethod
+    def validate_data(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """校验已转换数据必须包含账号列表。"""
+
+        accounts = value.get("accounts")
+        if not isinstance(accounts, list) or not accounts:
+            raise ValueError("待推送数据必须包含 accounts 数组")
         return value
 
 
@@ -172,8 +246,8 @@ def mask_api_key(api_key: str) -> str | None:
     return f"{api_key[:8]}...{api_key[-4:]}"
 
 
-def parse_optional_group_id(value: str | int | None) -> int | None:
-    """从旧配置字符串中解析可选 Sub2 分组 ID。"""
+def parse_optional_positive_id(value: str | int | None) -> int | None:
+    """从旧配置字符串中解析可选正整数 ID。"""
 
     trimmed = str(value).strip() if value is not None else ""
     if not trimmed:
@@ -183,6 +257,12 @@ def parse_optional_group_id(value: str | int | None) -> int | None:
     except ValueError:
         return None
     return int(parsed) if parsed.is_integer() and parsed > 0 else None
+
+
+def parse_optional_group_id(value: str | int | None) -> int | None:
+    """从旧配置字符串中解析可选 Sub2 分组 ID。"""
+
+    return parse_optional_positive_id(value)
 
 
 def parse_bool_setting(value: str | None, default: bool) -> bool:
@@ -308,6 +388,20 @@ def normalize_sub2_default_proxy_list_url(api_url: str) -> str:
         "status": "active",
         "sort_by": "id",
         "sort_order": "desc",
+    })
+    return urlunparse(parsed._replace(query=query))
+
+
+def normalize_sub2_active_proxies_url(api_url: str) -> str:
+    """生成获取 Sub2 可用代理列表的接口地址。"""
+
+    parsed = urlparse(normalize_sub2_proxies_url(api_url))
+    query = urlencode({
+        "page": "1",
+        "page_size": "1000",
+        "status": "active",
+        "sort_by": "id",
+        "sort_order": "asc",
     })
     return urlunparse(parsed._replace(query=query))
 
@@ -767,6 +861,7 @@ class Sub2Service:
             apiUrl=trim_string(self.repository.get(API_URL_KEY) or settings.sub2_api_url),
             apiKey=trim_string(self.repository.get(API_KEY_KEY) or settings.sub2_api_key),
             defaultGroupId=parse_optional_group_id(self.repository.get(DEFAULT_GROUP_ID_KEY)),
+            defaultProxyId=parse_optional_positive_id(self.repository.get(DEFAULT_PROXY_ID_KEY)),
             openAiAuthLoginEnabled=parse_bool_setting(self.repository.get(OPENAI_AUTH_LOGIN_ENABLED_KEY), True),
         )
 
@@ -779,6 +874,7 @@ class Sub2Service:
             hasApiKey=bool(current.api_key),
             apiKeyPreview=mask_api_key(current.api_key),
             defaultGroupId=current.default_group_id,
+            defaultProxyId=current.default_proxy_id,
             openAiAuthLoginEnabled=current.open_ai_auth_login_enabled,
         )
 
@@ -799,6 +895,9 @@ class Sub2Service:
             defaultGroupId=current.default_group_id
             if "default_group_id" not in update.model_fields_set
             else update.default_group_id,
+            defaultProxyId=current.default_proxy_id
+            if "default_proxy_id" not in update.model_fields_set
+            else update.default_proxy_id,
             openAiAuthLoginEnabled=current.open_ai_auth_login_enabled
             if "open_ai_auth_login_enabled" not in update.model_fields_set
             else (
@@ -814,14 +913,19 @@ class Sub2Service:
             "" if next_settings.default_group_id is None else str(next_settings.default_group_id),
         )
         self.repository.set(
+            DEFAULT_PROXY_ID_KEY,
+            "" if next_settings.default_proxy_id is None else str(next_settings.default_proxy_id),
+        )
+        self.repository.set(
             OPENAI_AUTH_LOGIN_ENABLED_KEY,
             "true" if next_settings.open_ai_auth_login_enabled else "false",
         )
         logger.info(
-            "保存 Sub2API 配置：apiUrl=%s hasApiKey=%s defaultGroupId=%s openAiAuthLoginEnabled=%s",
+            "保存 Sub2API 配置：apiUrl=%s hasApiKey=%s defaultGroupId=%s defaultProxyId=%s openAiAuthLoginEnabled=%s",
             next_settings.api_url,
             bool(next_settings.api_key),
             next_settings.default_group_id,
+            next_settings.default_proxy_id,
             next_settings.open_ai_auth_login_enabled,
         )
         return self.to_public_settings(next_settings)
@@ -908,17 +1012,39 @@ class Sub2Service:
         logger.info("Sub2 分组获取成功：count=%s", len(groups))
         return groups
 
+    def fetch_proxies(self) -> list[Sub2Proxy]:
+        """从 Sub2API 获取当前可用代理列表。"""
+
+        settings = self._require_settings()
+        logger.info("开始获取 Sub2 代理：apiUrl=%s", settings.api_url)
+        response = self._request("GET", normalize_sub2_active_proxies_url(settings.api_url), settings)
+        body = self._sub2_json_response(response, "Sub2API 获取代理失败", "接口返回失败")
+        proxies = [
+            Sub2Proxy(
+                id=proxy["id"],
+                name=proxy.get("name"),
+                protocol=proxy.get("protocol"),
+                host=proxy.get("host"),
+                port=proxy.get("port"),
+                username=proxy.get("username"),
+            )
+            for proxy in extract_sub2_proxies(body)
+        ]
+        logger.info("Sub2 代理获取成功：count=%s", len(proxies))
+        return proxies
+
     def convert_account(self, input_value: Any) -> dict[str, Any]:
         """转换旧 ChatGPT session JSON 为 Sub2 导入数据。"""
 
         return convert_chat_gpt_session_to_sub2(input_value)
 
-    def push_data(self, data: dict[str, Any], group_id: int | None = None) -> dict[str, Any]:
+    def push_data(self, data: dict[str, Any], group_id: int | None = None, proxy_id: int | None = None) -> dict[str, Any]:
         """推送已经转换好的 Sub2 导入数据。
 
         参数:
             data: Sub2 导入数据，至少包含 accounts。
             group_id: 本次推送分组 ID；为空时使用默认分组。
+            proxy_id: 用户选择的 Sub2 代理 ID；为空时按导入数据自动解析。
 
         返回:
             实际推送的数据和 Sub2API 创建账号响应。
@@ -926,12 +1052,14 @@ class Sub2Service:
 
         settings = self._require_settings()
         resolved_group_id = self.resolve_push_group_id(group_id, settings)
+        resolved_proxy_id = self.resolve_push_proxy_id(proxy_id)
         accounts = data.get("accounts") if isinstance(data.get("accounts"), list) else []
-        logger.info("开始推送 Sub2 账号：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
-        prepared = apply_sub2_group(self.ensure_data_proxy(data, settings), resolved_group_id)
+        logger.info("开始推送 Sub2 账号：groupId=%s proxyId=%s accountCount=%s", resolved_group_id, resolved_proxy_id, len(accounts))
+        proxied_data = data if resolved_proxy_id is not None else self.ensure_data_proxy(data, settings)
+        prepared = apply_sub2_group(proxied_data, resolved_group_id)
         result = {
             "data": prepared,
-            "response": self.create_accounts(prepared, resolved_group_id, settings),
+            "response": self.create_accounts(prepared, resolved_group_id, settings, resolved_proxy_id),
         }
         logger.info("Sub2 账号推送完成：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
         return result
@@ -940,6 +1068,7 @@ class Sub2Service:
         self,
         data: dict[str, Any],
         group_id: int | None,
+        proxy_id: int | None,
         authorize: Callable[[Sub2AuthLoginRequest], Sub2AuthLoginCallback],
     ) -> dict[str, Any]:
         """通过 Sub2 OpenAI 授权登录分支创建账号。
@@ -947,6 +1076,7 @@ class Sub2Service:
         参数:
             data: 已转换的 Sub2 导入数据。
             group_id: 本次推送分组 ID；为空时使用默认分组。
+            proxy_id: 本次推送代理 ID；为空时按导入数据自动解析。
             authorize: 使用当前 OpenAI 会话打开 Sub2 授权 URL 并返回 OAuth 回调参数。
 
         返回:
@@ -959,21 +1089,23 @@ class Sub2Service:
 
         settings = self._require_settings()
         resolved_group_id = self.resolve_push_group_id(group_id, settings)
-        prepared = apply_sub2_group(self.ensure_data_proxy(data, settings), resolved_group_id)
+        resolved_proxy_id = self.resolve_push_proxy_id(proxy_id)
+        prepared_data = data if resolved_proxy_id is not None else self.ensure_data_proxy(data, settings)
+        prepared = apply_sub2_group(prepared_data, resolved_group_id)
         proxies = proxy_by_key(prepared)
         responses: list[Any] = []
         accounts = prepared.get("accounts") if isinstance(prepared.get("accounts"), list) else []
-        logger.info("开始通过 Sub2 授权登录创建账号：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
+        logger.info("开始通过 Sub2 授权登录创建账号：groupId=%s proxyId=%s accountCount=%s", resolved_group_id, resolved_proxy_id, len(accounts))
         for account in accounts:
             if not isinstance(account, dict):
                 continue
             proxy = proxies.get(str(account.get("proxy_key") or ""), {})
-            proxy_id = self.resolve_proxy_id(proxy, settings)
+            account_proxy_id = resolved_proxy_id if resolved_proxy_id is not None else self.resolve_proxy_id(proxy, settings)
             generated_response = self._request(
                 "POST",
                 normalize_sub2_openai_auth_url(settings.api_url, "generate-auth-url"),
                 settings,
-                {"proxy_id": proxy_id} if proxy_id else {},
+                {"proxy_id": account_proxy_id} if account_proxy_id else {},
             )
             generated = self._sub2_json_response(generated_response, "Sub2API 生成 OpenAI 授权地址失败", "接口返回失败")
             auth_session = extract_sub2_auth_session(generated)
@@ -983,7 +1115,7 @@ class Sub2Service:
                 session_id=auth_session["session_id"],
                 email=str(credentials.get("email") or account.get("name") or ""),
                 account=account,
-                proxy_id=proxy_id,
+                proxy_id=account_proxy_id,
             ))
             state = callback.state or auth_url_state(auth_session["auth_url"])
             if not callback.code or not state:
@@ -999,8 +1131,8 @@ class Sub2Service:
                 "group_ids": [resolved_group_id],
                 "confirm_mixed_channel_risk": True,
             }
-            if proxy_id:
-                payload["proxy_id"] = proxy_id
+            if account_proxy_id:
+                payload["proxy_id"] = account_proxy_id
             create_response = self._request(
                 "POST",
                 normalize_sub2_openai_auth_url(settings.api_url, "create-from-oauth"),
@@ -1008,7 +1140,7 @@ class Sub2Service:
                 payload,
             )
             responses.append(self._sub2_json_response(create_response, "Sub2API 授权创建账号失败", "接口返回失败"))
-            logger.info("Sub2 授权登录创建账号成功：name=%s groupId=%s proxyId=%s", account.get("name"), resolved_group_id, proxy_id)
+            logger.info("Sub2 授权登录创建账号成功：name=%s groupId=%s proxyId=%s", account.get("name"), resolved_group_id, account_proxy_id)
         logger.info("Sub2 授权登录创建账号完成：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
         return {"data": prepared, "response": responses}
 
@@ -1019,6 +1151,15 @@ class Sub2Service:
         if not isinstance(resolved, int) or resolved <= 0:
             raise ValueError("请先在系统设置里选择 Sub2 默认推送分组")
         return resolved
+
+    def resolve_push_proxy_id(self, proxy_id: int | None) -> int | None:
+        """解析本次推送应该使用的 Sub2 代理 ID。"""
+
+        if proxy_id is None:
+            return None
+        if not isinstance(proxy_id, int) or proxy_id <= 0:
+            raise ValueError("Sub2 默认代理 ID 无效")
+        return proxy_id
 
     def fetch_default_proxy(self, settings: Sub2Settings) -> dict[str, Any]:
         """从 Sub2API 获取一个当前可用代理作为默认绑定代理。"""
@@ -1143,13 +1284,20 @@ class Sub2Service:
         logger.info("Sub2 代理创建完成：proxyId=%s", created_id)
         return created_id
 
-    def create_accounts(self, data: dict[str, Any], group_id: int, settings: Sub2Settings) -> list[Any]:
+    def create_accounts(
+        self,
+        data: dict[str, Any],
+        group_id: int,
+        settings: Sub2Settings,
+        selected_proxy_id: int | None = None,
+    ) -> list[Any]:
         """逐个调用 Sub2API 创建 OpenAI 账号。
 
         参数:
             data: 已补齐代理和分组的 Sub2 导入数据。
             group_id: 本次推送目标分组。
             settings: Sub2API 配置。
+            selected_proxy_id: 用户指定的代理 ID；为空时根据导入数据自动解析。
 
         返回:
             每个账号创建接口的响应体。
@@ -1161,7 +1309,7 @@ class Sub2Service:
             if not isinstance(account, dict):
                 continue
             proxy = proxies.get(str(account.get("proxy_key") or ""), {})
-            proxy_id = self.resolve_proxy_id(proxy, settings)
+            proxy_id = selected_proxy_id if selected_proxy_id is not None else self.resolve_proxy_id(proxy, settings)
             logger.info(
                 "创建 Sub2 账号：name=%s groupId=%s proxyId=%s",
                 account.get("name"),
