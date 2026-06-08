@@ -1803,6 +1803,63 @@ a:hover {
     padding: 5px 10px;
 }
 
+.converter-push-progress {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--muted);
+    padding: 10px 12px;
+}
+
+.converter-push-progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--foreground);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.converter-push-progress-track {
+    overflow: hidden;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--border);
+}
+
+.converter-push-progress-track span {
+    display: block;
+    height: 100%;
+    min-width: 8px;
+    border-radius: inherit;
+    background: var(--primary);
+    transition: width 180ms ease;
+}
+
+.converter-push-progress.running .converter-push-progress-track span {
+    background: linear-gradient(90deg, var(--primary), var(--success));
+}
+
+.converter-push-progress.succeeded .converter-push-progress-track span {
+    background: var(--success);
+}
+
+.converter-push-progress.failed .converter-push-progress-track span {
+    background: var(--danger);
+}
+
+.converter-push-progress p {
+    margin: 0;
+    overflow: hidden;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .converter-account-table {
     overflow: auto;
     max-height: 220px;

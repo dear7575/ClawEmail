@@ -1,6 +1,10 @@
 import json
+import ipaddress
 import logging
 import re
+import threading
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -21,6 +25,8 @@ API_KEY_KEY = "sub2.apiKey"
 DEFAULT_GROUP_ID_KEY = "sub2.defaultGroupId"
 DEFAULT_PROXY_ID_KEY = "sub2.defaultProxyId"
 OPENAI_AUTH_LOGIN_ENABLED_KEY = "sub2.openAiAuthLoginEnabled"
+SUB2_PUSH_JOB_TTL_SECONDS = 10 * 60
+SUB2_PUSH_JOB_MAX_ITEMS = 200
 
 
 class Sub2Settings(BaseModel):
@@ -206,6 +212,24 @@ class Sub2AuthLoginRequest:
     email: str
     account: dict[str, Any]
     proxy_id: int | None
+
+
+class Sub2PushJobResponse(BaseModel):
+    """Sub2 后台推送任务响应。"""
+
+    success: bool = True
+    job_id: str = Field(alias="jobId")
+    status: str
+    group_id: int | None = Field(default=None, alias="groupId")
+    proxy_id: int | None = Field(default=None, alias="proxyId")
+    account_count: int = Field(default=0, alias="accountCount")
+    progress: int = 0
+    created_at: float = Field(alias="createdAt")
+    updated_at: float = Field(alias="updatedAt")
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 @dataclass(slots=True)
@@ -413,6 +437,35 @@ def sub2_auth_headers(api_key: str) -> dict[str, str]:
     if trimmed.lower().startswith("bearer "):
         return {"authorization": trimmed}
     return {"x-api-key": trimmed}
+
+
+def should_bypass_sub2_system_proxy(url: str) -> bool:
+    """判断 Sub2API 目标地址是否应该绕过系统代理。"""
+
+    hostname = (urlparse(url).hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        return False
+    if hostname in {"localhost", "host.docker.internal"}:
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        # Docker Compose 服务名通常是无点号的单标签主机名，应直接走容器网络。
+        return "." not in hostname
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_unspecified
+    )
+
+
+def resolve_sub2_system_proxy(url: str, proxy_url: str) -> str | None:
+    """根据 Sub2API 目标地址决定是否使用系统代理。"""
+
+    if not proxy_url:
+        return None
+    return None if should_bypass_sub2_system_proxy(url) else proxy_url
 
 
 def number_field(record: dict[str, Any], key: str) -> int | None:
@@ -951,9 +1004,16 @@ class Sub2Service:
 
         network_settings = network_settings_service.get()
         timeout_seconds = network_settings.timeout_ms / 1000
-        proxy = network_settings.proxy_url or None
-        logger.debug("请求 Sub2API：method=%s url=%s hasPayload=%s proxy=%s", method, url, payload is not None, bool(proxy))
-        with self.client_factory(timeout=timeout_seconds, proxy=proxy) as client:
+        proxy = resolve_sub2_system_proxy(url, network_settings.proxy_url)
+        logger.debug(
+            "请求 Sub2API：method=%s url=%s hasPayload=%s proxy=%s proxyBypassed=%s",
+            method,
+            url,
+            payload is not None,
+            bool(proxy),
+            bool(network_settings.proxy_url) and proxy is None,
+        )
+        with self.client_factory(timeout=timeout_seconds, proxy=proxy, trust_env=False) as client:
             headers = sub2_auth_headers(settings.api_key)
             if payload is not None:
                 headers = {"content-type": "application/json", **headers}
@@ -1346,3 +1406,126 @@ class Sub2Service:
 
 
 sub2_service = Sub2Service()
+
+
+class Sub2PushJobService:
+    """Sub2 推送后台任务服务。"""
+
+    def __init__(
+        self,
+        service: Sub2Service = sub2_service,
+        ttl_seconds: int = SUB2_PUSH_JOB_TTL_SECONDS,
+        max_items: int = SUB2_PUSH_JOB_MAX_ITEMS,
+    ) -> None:
+        """初始化后台任务服务。"""
+
+        self.service = service
+        self.ttl_seconds = ttl_seconds
+        self.max_items = max_items
+        self._lock = threading.Lock()
+        self._jobs: dict[str, dict[str, Any]] = {}
+
+    def start(self, data: dict[str, Any], group_id: int | None = None, proxy_id: int | None = None) -> dict[str, Any]:
+        """启动 Sub2 推送后台任务并立即返回任务状态。"""
+
+        job_id = uuid.uuid4().hex
+        now = time.time()
+        accounts = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+        job = {
+            "jobId": job_id,
+            "status": "running",
+            "groupId": group_id,
+            "proxyId": proxy_id,
+            "accountCount": len(accounts),
+            "progress": 5,
+            "createdAt": now,
+            "updatedAt": now,
+            "result": None,
+            "error": None,
+        }
+        with self._lock:
+            self._prune_locked(now)
+            self._jobs[job_id] = job
+            snapshot = dict(job)
+        thread = threading.Thread(
+            target=self._run,
+            args=(job_id, data, group_id, proxy_id),
+            name=f"sub2-push-{job_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        return snapshot
+
+    def get(self, job_id: str) -> dict[str, Any] | None:
+        """读取后台任务状态快照。"""
+
+        with self._lock:
+            self._prune_locked(time.time())
+            job = self._jobs.get(job_id)
+            return dict(job) if job else None
+
+    def _run(self, job_id: str, data: dict[str, Any], group_id: int | None, proxy_id: int | None) -> None:
+        """执行后台推送并写回任务状态。"""
+
+        try:
+            self._update_progress(job_id, 20)
+            result = self.service.push_data(data, group_id, proxy_id)
+            self._finish(job_id, "succeeded", progress=100, result={"success": True, **result})
+        except Exception as exc:
+            logger.exception("Sub2 后台推送失败：jobId=%s groupId=%s proxyId=%s", job_id, group_id, proxy_id)
+            self._finish(job_id, "failed", progress=100, error=str(exc))
+
+    def _update_progress(self, job_id: str, progress: int) -> None:
+        """更新后台任务进度。"""
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            job["progress"] = min(99, max(0, progress))
+            job["updatedAt"] = time.time()
+
+    def _finish(
+        self,
+        job_id: str,
+        status: str,
+        progress: int,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """更新后台任务终态。"""
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            job["status"] = status
+            job["progress"] = progress
+            job["result"] = result
+            job["error"] = error
+            job["updatedAt"] = time.time()
+
+    def _prune_locked(self, now: float) -> None:
+        """清理过期或超量的任务记录，调用方必须已持有锁。"""
+
+        expired_ids = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.get("status") != "running" and now - float(job.get("updatedAt") or now) > self.ttl_seconds
+        ]
+        for job_id in expired_ids:
+            self._jobs.pop(job_id, None)
+        if len(self._jobs) <= self.max_items:
+            return
+        removable = sorted(
+            (
+                (float(job.get("updatedAt") or 0), job_id)
+                for job_id, job in self._jobs.items()
+                if job.get("status") != "running"
+            ),
+        )
+        for _updated_at, job_id in removable[: max(0, len(self._jobs) - self.max_items)]:
+            self._jobs.pop(job_id, None)
+
+
+sub2_push_job_service = Sub2PushJobService()

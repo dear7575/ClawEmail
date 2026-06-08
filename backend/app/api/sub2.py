@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.services.sub2 import (
     Sub2AccountPayload,
@@ -8,9 +8,11 @@ from app.services.sub2 import (
     Sub2DataPayload,
     Sub2GroupsResponse,
     Sub2ProxiesResponse,
+    Sub2PushJobResponse,
     Sub2PushResponse,
     Sub2PublicSettings,
     Sub2SettingsUpdate,
+    sub2_push_job_service,
     sub2_service,
 )
 
@@ -79,3 +81,22 @@ def push_sub2_data(body: Sub2DataPayload) -> Sub2PushResponse:
     logger.info("API 推送已转换 Sub2 数据：groupId=%s proxyId=%s accountCount=%s", body.group_id, body.proxy_id, account_count)
     result = sub2_service.push_data(body.data, body.group_id, body.proxy_id)
     return Sub2PushResponse(success=True, **result)
+
+
+@router.post("/api/sub2/push-data/jobs", response_model=Sub2PushJobResponse, response_model_by_alias=True)
+def start_sub2_data_push_job(body: Sub2DataPayload) -> Sub2PushJobResponse:
+    """启动已转换 Sub2 导入数据的后台推送任务。"""
+
+    account_count = len(body.data.get("accounts", []))
+    logger.info("API 启动 Sub2 后台推送：groupId=%s proxyId=%s accountCount=%s", body.group_id, body.proxy_id, account_count)
+    return Sub2PushJobResponse(**sub2_push_job_service.start(body.data, body.group_id, body.proxy_id))
+
+
+@router.get("/api/sub2/push-data/jobs/{job_id}", response_model=Sub2PushJobResponse, response_model_by_alias=True)
+def get_sub2_data_push_job(job_id: str) -> Sub2PushJobResponse:
+    """查询 Sub2 后台推送任务状态。"""
+
+    job = sub2_push_job_service.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Sub2 推送任务不存在或已过期")
+    return Sub2PushJobResponse(**job)

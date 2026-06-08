@@ -156,6 +156,18 @@ export type Sub2PushResult = {
   };
 };
 
+export type Sub2PushJobStatus = {
+  success: boolean;
+  jobId: string;
+  status: "running" | "succeeded" | "failed";
+  groupId?: number | null;
+  proxyId?: number | null;
+  accountCount: number;
+  progress: number;
+  result?: Sub2PushResult | null;
+  error?: string | null;
+};
+
 export type OpenAiDuckPushJobStatus = {
   success: boolean;
   jobId: string;
@@ -568,11 +580,37 @@ export async function fetchSub2Proxies(): Promise<Sub2Proxy[]> {
   return result.items;
 }
 
-export async function pushSub2Data(data: unknown, groupId: number, proxyId?: number | null): Promise<Sub2PushResult> {
-  return requestJson<Sub2PushResult>("/api/sub2/push-data", {
+export async function pushSub2Data(
+  data: unknown,
+  groupId: number,
+  proxyId?: number | null,
+  options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
+): Promise<Sub2PushResult> {
+  const started = await requestJson<Sub2PushJobStatus>("/api/sub2/push-data/jobs", {
     method: "POST",
     body: JSON.stringify({ data, groupId, proxyId })
   });
+  await options?.onPoll?.(started);
+  return waitForSub2PushJob(started.jobId, options);
+}
+
+export async function fetchSub2PushJob(jobId: string): Promise<Sub2PushJobStatus> {
+  return requestJson<Sub2PushJobStatus>(`/api/sub2/push-data/jobs/${encodeURIComponent(jobId)}`);
+}
+
+async function waitForSub2PushJob(
+  jobId: string,
+  options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
+): Promise<Sub2PushResult> {
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    const job = await fetchSub2PushJob(jobId);
+    await options?.onPoll?.(job);
+    if (job.status === "succeeded" && job.result) return job.result;
+    if (job.status === "failed") throw new Error(job.error || "Sub2 推送失败");
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
+  }
+  throw new Error("Sub2 推送仍在后台执行，请稍后刷新任务状态");
 }
 
 export async function pushOpenAiDuckAddressToSub2(

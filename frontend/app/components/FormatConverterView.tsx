@@ -14,7 +14,7 @@ import {
     sanitizeFormatConverterFileToken
 } from "../lib/session-format-converter";
 import {Braces, Copy, Download, FileJson, RotateCcw, UploadCloud} from "lucide-react";
-import {type Sub2Group, type Sub2Proxy, type Sub2PushResult, type Sub2Settings} from "../api";
+import {type Sub2Group, type Sub2Proxy, type Sub2PushJobStatus, type Sub2PushResult, type Sub2Settings} from "../api";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./ui/select";
 
 type StatusTone = "idle" | "ok" | "error";
@@ -37,7 +37,12 @@ type FormatConverterViewProps = {
     onSelectedSub2ProxyIdChange: (value: string) => void;
     onRefreshSub2Groups: () => Promise<void>;
     onRefreshSub2Proxies: () => Promise<void>;
-    onPushSub2Data: (data: unknown, groupId: number, proxyId?: number | null) => Promise<Sub2PushResult>;
+    onPushSub2Data: (
+        data: unknown,
+        groupId: number,
+        proxyId?: number | null,
+        options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
+    ) => Promise<Sub2PushResult>;
     onOpenSettings: () => void;
 };
 
@@ -99,6 +104,7 @@ export function FormatConverterView({
         tone: "idle",
         message: "暂无输出。"
     });
+    const [pushJob, setPushJob] = useState<Sub2PushJobStatus | null>(null);
     const [fileBusy, setFileBusy] = useState(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const outputText = useMemo(() => buildOutputText(format, result.converted), [format, result.converted]);
@@ -239,17 +245,32 @@ export function FormatConverterView({
 
         try {
             const data = buildOutputDocument("sub2api", result.converted);
+            setPushJob(null);
             const pushResult = await onPushSub2Data(
                 data,
                 selectedGroupIdNumber,
-                selectedProxyIdNumber > 0 ? selectedProxyIdNumber : null
+                selectedProxyIdNumber > 0 ? selectedProxyIdNumber : null,
+                {
+                    onPoll: (job) => {
+                        setPushJob(job);
+                        if (job.status === "running") {
+                            setOutputStatus({
+                                tone: "idle",
+                                message: `Sub2API 后台推送中：${job.accountCount || result.converted.length} 个账号。`
+                            });
+                        }
+                    }
+                }
             );
             const responseCount = Array.isArray(pushResult.response) ? pushResult.response.length : result.converted.length;
             setOutputStatus({tone: "ok", message: `已推送 ${responseCount} 个账号到 Sub2API。`});
         } catch (error) {
             setOutputStatus({tone: "error", message: error instanceof Error ? error.message : "推送失败"});
+            setPushJob((current) => current ? {...current, status: "failed", progress: 100} : current);
         }
     }
+
+    const pushProgress = pushJob ? Math.max(0, Math.min(100, Math.round(pushJob.progress || 0))) : 0;
 
     return (
         <section className="format-converter-page">
@@ -448,6 +469,27 @@ export function FormatConverterView({
                             </button>
                         )}
                     </div>
+
+                    {pushJob && (
+                        <div className={`converter-push-progress ${pushJob.status}`}>
+                            <div className="converter-push-progress-head">
+                                <strong>
+                                    {pushJob.status === "succeeded"
+                                        ? "推送完成"
+                                        : pushJob.status === "failed"
+                                            ? "推送失败"
+                                            : "正在推送"}
+                                </strong>
+                                <span>{pushProgress}%</span>
+                            </div>
+                            <div className="converter-push-progress-track" aria-hidden="true">
+                                <span style={{width: `${pushProgress}%`}}/>
+                            </div>
+                            <p>
+                                任务 {pushJob.jobId.slice(0, 8)} · {pushJob.accountCount || result.converted.length} 个账号
+                            </p>
+                        </div>
+                    )}
 
                     <div className="converter-account-table">
                         <div className="converter-account-row head">

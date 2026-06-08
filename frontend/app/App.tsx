@@ -53,6 +53,7 @@ import {
     sendTelegramNotification,
     setAdminPassword,
     type Sub2Group,
+    type Sub2PushJobStatus,
     type Sub2Proxy,
     type Sub2Settings,
     type SystemNetworkSettings,
@@ -1075,10 +1076,15 @@ export function App() {
         }
     }
 
-    async function handlePushFormatConvertedSub2Data(data: unknown, groupId: number, proxyId?: number | null) {
+    async function handlePushFormatConvertedSub2Data(
+        data: unknown,
+        groupId: number,
+        proxyId?: number | null,
+        options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
+    ) {
         setFormatConvertPushBusy(true);
         try {
-            const result = await pushSub2Data(data, groupId, proxyId);
+            const result = await pushSub2Data(data, groupId, proxyId, options);
             showStatus("账号已推送到 Sub2API");
             return result;
         } catch (err) {

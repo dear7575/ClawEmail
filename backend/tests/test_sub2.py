@@ -1,4 +1,5 @@
 import importlib
+import time
 from collections import deque
 
 import httpx
@@ -53,10 +54,28 @@ def reset_sub2_service(tmp_path, monkeypatch, responses: list[httpx.Response] | 
             repository=repository_module.settings_repository,
             client_factory=lambda **kwargs: RecordingClient(response_queue, calls, **kwargs),
         )
+        sub2_service_module.sub2_push_job_service = sub2_service_module.Sub2PushJobService(
+            sub2_service_module.sub2_service,
+        )
         sub2_api_module.sub2_service = sub2_service_module.sub2_service
+        sub2_api_module.sub2_push_job_service = sub2_service_module.sub2_push_job_service
     else:
         sub2_api_module.sub2_service = sub2_service_module.sub2_service
+        sub2_api_module.sub2_push_job_service = sub2_service_module.sub2_push_job_service
     return repository_module.settings_repository, calls
+
+
+def wait_sub2_push_job(test_client, job_id: str) -> dict:
+    deadline = time.time() + 3
+    body: dict = {}
+    while time.time() < deadline:
+        response = test_client.get(f"/api/sub2/push-data/jobs/{job_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] != "running":
+            return body
+        time.sleep(0.02)
+    raise AssertionError(f"Sub2 推送任务未完成：{body}")
 
 
 def test_get_sub2_settings_returns_defaults(tmp_path, monkeypatch, test_client) -> None:
@@ -191,6 +210,53 @@ def test_get_sub2_groups_uses_bearer_authorization(tmp_path, monkeypatch, test_c
     assert result.status_code == 200
     assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active"
     assert calls[0]["headers"] == {"authorization": "Bearer token"}
+
+
+def test_get_sub2_groups_bypasses_proxy_for_compose_service_name(tmp_path, monkeypatch, test_client) -> None:
+    response = httpx.Response(200, json=[])
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, [response])
+    repository.set("sub2.apiUrl", "http://sub2api:8080")
+    repository.set("sub2.apiKey", "adminkey")
+    repository.set("system.proxyUrl", "http://127.0.0.1:7890/")
+    client = test_client
+
+    result = client.get("/api/sub2/groups")
+
+    assert result.status_code == 200
+    assert calls[0]["url"] == "http://sub2api:8080/api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active"
+    assert calls[0]["kwargs"]["proxy"] is None
+    assert calls[0]["kwargs"]["trust_env"] is False
+
+
+def test_get_sub2_groups_bypasses_proxy_for_private_ip(tmp_path, monkeypatch, test_client) -> None:
+    response = httpx.Response(200, json=[])
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, [response])
+    repository.set("sub2.apiUrl", "http://172.16.0.19:8080")
+    repository.set("sub2.apiKey", "adminkey")
+    repository.set("system.proxyUrl", "http://127.0.0.1:7890/")
+    client = test_client
+
+    result = client.get("/api/sub2/groups")
+
+    assert result.status_code == 200
+    assert calls[0]["url"] == "http://172.16.0.19:8080/api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active"
+    assert calls[0]["kwargs"]["proxy"] is None
+    assert calls[0]["kwargs"]["trust_env"] is False
+
+
+def test_get_sub2_groups_keeps_proxy_for_public_host(tmp_path, monkeypatch, test_client) -> None:
+    response = httpx.Response(200, json=[])
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, [response])
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    repository.set("system.proxyUrl", "http://127.0.0.1:7890/")
+    client = test_client
+
+    result = client.get("/api/sub2/groups")
+
+    assert result.status_code == 200
+    assert calls[0]["kwargs"]["proxy"] == "http://127.0.0.1:7890/"
+    assert calls[0]["kwargs"]["trust_env"] is False
 
 
 def test_get_sub2_proxies_fetches_active_proxies(tmp_path, monkeypatch, test_client) -> None:
@@ -388,6 +454,57 @@ def test_push_sub2_data_uses_selected_proxy_id_without_default_lookup(tmp_path, 
     assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
     assert calls[0]["json"]["proxy_id"] == 42
     assert calls[0]["json"]["group_ids"] == [16]
+
+
+def test_start_sub2_push_data_job_returns_running_and_finishes(tmp_path, monkeypatch, test_client) -> None:
+    responses = [
+        httpx.Response(200, json={"code": 0, "data": {"id": 104}}),
+    ]
+    repository, calls = reset_sub2_service(tmp_path, monkeypatch, responses)
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    client = test_client
+
+    response = client.post("/api/sub2/push-data/jobs", json={
+        "groupId": 15,
+        "proxyId": 42,
+        "data": {
+            "exported_at": "2026-06-08T00:00:00Z",
+            "proxies": [],
+            "accounts": [{
+                "name": "user@example.com",
+                "platform": "openai",
+                "type": "oauth",
+                "credentials": {
+                    "access_token": "access-token",
+                    "chatgpt_account_id": "account-id",
+                    "chatgpt_user_id": "user-id",
+                    "email": "user@example.com",
+                    "expires_at": "2026-06-08T00:00:00Z",
+                    "plan_type": "plus",
+                },
+                "extra": {"email": "user@example.com"},
+                "auto_pause_on_expired": True,
+                "concurrency": 10,
+                "priority": 1,
+            }],
+        },
+    })
+
+    assert response.status_code == 200
+    started = response.json()
+    assert started["success"] is True
+    assert started["status"] == "running"
+    assert started["accountCount"] == 1
+    assert started["progress"] >= 5
+    finished = wait_sub2_push_job(client, started["jobId"])
+    assert finished["status"] == "succeeded"
+    assert finished["progress"] == 100
+    assert finished["result"]["success"] is True
+    assert finished["result"]["response"][0]["data"]["id"] == 104
+    assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
+    assert calls[0]["json"]["group_ids"] == [15]
+    assert calls[0]["json"]["proxy_id"] == 42
 
 
 def test_push_sub2_account_reuses_matching_proxy_without_create(tmp_path, monkeypatch, test_client) -> None:
