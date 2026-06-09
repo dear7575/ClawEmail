@@ -223,6 +223,7 @@ class Sub2PushJobResponse(BaseModel):
     group_id: int | None = Field(default=None, alias="groupId")
     proxy_id: int | None = Field(default=None, alias="proxyId")
     account_count: int = Field(default=0, alias="accountCount")
+    pushed_count: int = Field(default=0, alias="pushedCount")
     progress: int = 0
     created_at: float = Field(alias="createdAt")
     updated_at: float = Field(alias="updatedAt")
@@ -1098,13 +1099,20 @@ class Sub2Service:
 
         return convert_chat_gpt_session_to_sub2(input_value)
 
-    def push_data(self, data: dict[str, Any], group_id: int | None = None, proxy_id: int | None = None) -> dict[str, Any]:
+    def push_data(
+        self,
+        data: dict[str, Any],
+        group_id: int | None = None,
+        proxy_id: int | None = None,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> dict[str, Any]:
         """推送已经转换好的 Sub2 导入数据。
 
         参数:
             data: Sub2 导入数据，至少包含 accounts。
             group_id: 本次推送分组 ID；为空时使用默认分组。
             proxy_id: 用户选择的 Sub2 代理 ID；为空时按导入数据自动解析。
+            progress_callback: 单个账号创建成功后的成功数量回调。
 
         返回:
             实际推送的数据和 Sub2API 创建账号响应。
@@ -1119,7 +1127,13 @@ class Sub2Service:
         prepared = apply_sub2_group(proxied_data, resolved_group_id)
         result = {
             "data": prepared,
-            "response": self.create_accounts(prepared, resolved_group_id, settings, resolved_proxy_id),
+            "response": self.create_accounts(
+                prepared,
+                resolved_group_id,
+                settings,
+                resolved_proxy_id,
+                progress_callback,
+            ),
         }
         logger.info("Sub2 账号推送完成：groupId=%s accountCount=%s", resolved_group_id, len(accounts))
         return result
@@ -1350,6 +1364,7 @@ class Sub2Service:
         group_id: int,
         settings: Sub2Settings,
         selected_proxy_id: int | None = None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> list[Any]:
         """逐个调用 Sub2API 创建 OpenAI 账号。
 
@@ -1358,6 +1373,7 @@ class Sub2Service:
             group_id: 本次推送目标分组。
             settings: Sub2API 配置。
             selected_proxy_id: 用户指定的代理 ID；为空时根据导入数据自动解析。
+            progress_callback: 单个账号创建成功后的成功数量回调。
 
         返回:
             每个账号创建接口的响应体。
@@ -1396,6 +1412,8 @@ class Sub2Service:
                 payload["proxy_id"] = proxy_id
             response = self._request("POST", normalize_sub2_accounts_url(settings.api_url), settings, payload)
             responses.append(self._sub2_json_response(response, "Sub2API 创建账号失败", "接口返回失败"))
+            if progress_callback:
+                progress_callback(len(responses))
             logger.info("Sub2 账号创建成功：name=%s groupId=%s", account.get("name"), group_id)
         return responses
 
@@ -1437,7 +1455,8 @@ class Sub2PushJobService:
             "groupId": group_id,
             "proxyId": proxy_id,
             "accountCount": len(accounts),
-            "progress": 5,
+            "pushedCount": 0,
+            "progress": 0,
             "createdAt": now,
             "updatedAt": now,
             "result": None,
@@ -1468,28 +1487,37 @@ class Sub2PushJobService:
         """执行后台推送并写回任务状态。"""
 
         try:
-            self._update_progress(job_id, 20)
-            result = self.service.push_data(data, group_id, proxy_id)
-            self._finish(job_id, "succeeded", progress=100, result={"success": True, **result})
+            result = self.service.push_data(
+                data,
+                group_id,
+                proxy_id,
+                progress_callback=lambda pushed_count: self._update_progress(job_id, pushed_count),
+            )
+            pushed_count = len(result.get("response", [])) if isinstance(result.get("response"), list) else None
+            self._finish(job_id, "succeeded", progress=100, pushed_count=pushed_count, result={"success": True, **result})
         except Exception as exc:
             logger.exception("Sub2 后台推送失败：jobId=%s groupId=%s proxyId=%s", job_id, group_id, proxy_id)
-            self._finish(job_id, "failed", progress=100, error=str(exc))
+            self._finish(job_id, "failed", error=str(exc))
 
-    def _update_progress(self, job_id: str, progress: int) -> None:
-        """更新后台任务进度。"""
+    def _update_progress(self, job_id: str, pushed_count: int) -> None:
+        """根据已成功账号数量更新后台任务进度。"""
 
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
                 return
-            job["progress"] = min(99, max(0, progress))
+            account_count = int(job.get("accountCount") or 0)
+            safe_pushed_count = min(account_count, max(0, pushed_count))
+            job["pushedCount"] = safe_pushed_count
+            job["progress"] = min(99, round(safe_pushed_count * 100 / account_count)) if account_count else 0
             job["updatedAt"] = time.time()
 
     def _finish(
         self,
         job_id: str,
         status: str,
-        progress: int,
+        progress: int | None = None,
+        pushed_count: int | None = None,
         result: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
@@ -1500,7 +1528,10 @@ class Sub2PushJobService:
             if not job:
                 return
             job["status"] = status
-            job["progress"] = progress
+            if pushed_count is not None:
+                job["pushedCount"] = min(int(job.get("accountCount") or 0), max(0, pushed_count))
+            if progress is not None:
+                job["progress"] = progress
             job["result"] = result
             job["error"] = error
             job["updatedAt"] = time.time()

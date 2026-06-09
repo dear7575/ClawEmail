@@ -1,4 +1,5 @@
 import importlib
+import threading
 import time
 from collections import deque
 
@@ -27,6 +28,27 @@ class RecordingClient:
             "kwargs": self.kwargs,
         })
         return self.responses.popleft()
+
+
+class BlockingSecondCreateClient(RecordingClient):
+    def __init__(
+        self,
+        responses: deque[httpx.Response],
+        calls: list[dict],
+        second_started: threading.Event,
+        release_second: threading.Event,
+        **kwargs,
+    ) -> None:
+        super().__init__(responses, calls, **kwargs)
+        self.second_started = second_started
+        self.release_second = release_second
+
+    def request(self, method: str, url: str, headers: dict[str, str], json=None):
+        call_number = len(self.calls) + 1
+        if call_number == 2:
+            self.second_started.set()
+            self.release_second.wait(timeout=3)
+        return super().request(method, url, headers, json=json)
 
 
 def reset_sub2_service(tmp_path, monkeypatch, responses: list[httpx.Response] | None = None):
@@ -496,15 +518,89 @@ def test_start_sub2_push_data_job_returns_running_and_finishes(tmp_path, monkeyp
     assert started["success"] is True
     assert started["status"] == "running"
     assert started["accountCount"] == 1
-    assert started["progress"] >= 5
+    assert started["pushedCount"] == 0
+    assert started["progress"] == 0
     finished = wait_sub2_push_job(client, started["jobId"])
     assert finished["status"] == "succeeded"
+    assert finished["pushedCount"] == 1
     assert finished["progress"] == 100
     assert finished["result"]["success"] is True
     assert finished["result"]["response"][0]["data"]["id"] == 104
     assert calls[0]["url"] == "https://sub2.example.com/api/v1/admin/accounts"
     assert calls[0]["json"]["group_ids"] == [15]
     assert calls[0]["json"]["proxy_id"] == 42
+
+
+def test_sub2_push_job_reports_success_count_while_running(tmp_path, monkeypatch, test_client) -> None:
+    responses = deque([
+        httpx.Response(200, json={"code": 0, "data": {"id": 201}}),
+        httpx.Response(200, json={"code": 0, "data": {"id": 202}}),
+    ])
+    repository, _calls = reset_sub2_service(tmp_path, monkeypatch)
+    repository.set("sub2.apiUrl", "https://sub2.example.com")
+    repository.set("sub2.apiKey", "adminkey")
+    import app.api.sub2 as sub2_api_module
+    import app.services.sub2 as sub2_service_module
+
+    calls: list[dict] = []
+    second_started = threading.Event()
+    release_second = threading.Event()
+    sub2_service_module.sub2_service = sub2_service_module.Sub2Service(
+        repository=repository,
+        client_factory=lambda **kwargs: BlockingSecondCreateClient(
+            responses,
+            calls,
+            second_started,
+            release_second,
+            **kwargs,
+        ),
+    )
+    sub2_service_module.sub2_push_job_service = sub2_service_module.Sub2PushJobService(
+        sub2_service_module.sub2_service,
+    )
+    sub2_api_module.sub2_service = sub2_service_module.sub2_service
+    sub2_api_module.sub2_push_job_service = sub2_service_module.sub2_push_job_service
+    client = test_client
+
+    response = client.post("/api/sub2/push-data/jobs", json={
+        "groupId": 15,
+        "proxyId": 42,
+        "data": {
+            "exported_at": "2026-06-08T00:00:00Z",
+            "proxies": [],
+            "accounts": [
+                {
+                    "name": "first@example.com",
+                    "platform": "openai",
+                    "type": "oauth",
+                    "credentials": {"email": "first@example.com", "access_token": "first-token"},
+                    "extra": {"email": "first@example.com"},
+                },
+                {
+                    "name": "second@example.com",
+                    "platform": "openai",
+                    "type": "oauth",
+                    "credentials": {"email": "second@example.com", "access_token": "second-token"},
+                    "extra": {"email": "second@example.com"},
+                },
+            ],
+        },
+    })
+
+    assert response.status_code == 200
+    started = response.json()
+    assert second_started.wait(timeout=3) is True
+    running = client.get(f"/api/sub2/push-data/jobs/{started['jobId']}").json()
+    assert running["status"] == "running"
+    assert running["accountCount"] == 2
+    assert running["pushedCount"] == 1
+    assert running["progress"] == 50
+
+    release_second.set()
+    finished = wait_sub2_push_job(client, started["jobId"])
+    assert finished["status"] == "succeeded"
+    assert finished["pushedCount"] == 2
+    assert finished["progress"] == 100
 
 
 def test_push_sub2_account_reuses_matching_proxy_without_create(tmp_path, monkeypatch, test_client) -> None:

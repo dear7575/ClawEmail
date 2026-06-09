@@ -254,9 +254,11 @@ export function FormatConverterView({
                     onPoll: (job) => {
                         setPushJob(job);
                         if (job.status === "running") {
+                            const total = job.accountCount || result.converted.length;
+                            const pushed = Math.max(0, Math.min(total, job.pushedCount || 0));
                             setOutputStatus({
                                 tone: "idle",
-                                message: `Sub2API 后台推送中：${job.accountCount || result.converted.length} 个账号。`
+                                message: `Sub2API 后台推送中：已成功 ${pushed} / ${total} 个账号。`
                             });
                         }
                     }
@@ -266,11 +268,13 @@ export function FormatConverterView({
             setOutputStatus({tone: "ok", message: `已推送 ${responseCount} 个账号到 Sub2API。`});
         } catch (error) {
             setOutputStatus({tone: "error", message: error instanceof Error ? error.message : "推送失败"});
-            setPushJob((current) => current ? {...current, status: "failed", progress: 100} : current);
+            setPushJob((current) => current ? {...current, status: "failed"} : current);
         }
     }
 
     const pushProgress = pushJob ? Math.max(0, Math.min(100, Math.round(pushJob.progress || 0))) : 0;
+    const pushTotal = pushJob ? pushJob.accountCount || result.converted.length : result.converted.length;
+    const pushedCount = pushJob ? Math.max(0, Math.min(pushTotal, pushJob.pushedCount || 0)) : 0;
 
     return (
         <section className="format-converter-page">
@@ -486,7 +490,7 @@ export function FormatConverterView({
                                 <span style={{width: `${pushProgress}%`}}/>
                             </div>
                             <p>
-                                任务 {pushJob.jobId.slice(0, 8)} · {pushJob.accountCount || result.converted.length} 个账号
+                                任务 {pushJob.jobId.slice(0, 8)} · 已成功 {pushedCount} / {pushTotal} 个账号
                             </p>
                         </div>
                     )}

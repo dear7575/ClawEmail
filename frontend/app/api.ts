@@ -163,6 +163,7 @@ export type Sub2PushJobStatus = {
   groupId?: number | null;
   proxyId?: number | null;
   accountCount: number;
+  pushedCount: number;
   progress: number;
   result?: Sub2PushResult | null;
   error?: string | null;
