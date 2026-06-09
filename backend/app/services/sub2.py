@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -27,6 +28,7 @@ DEFAULT_PROXY_ID_KEY = "sub2.defaultProxyId"
 OPENAI_AUTH_LOGIN_ENABLED_KEY = "sub2.openAiAuthLoginEnabled"
 SUB2_PUSH_JOB_TTL_SECONDS = 10 * 60
 SUB2_PUSH_JOB_MAX_ITEMS = 200
+SUB2_ACCOUNT_CREATE_MAX_WORKERS = 4
 
 
 class Sub2Settings(BaseModel):
@@ -1358,6 +1360,109 @@ class Sub2Service:
         logger.info("Sub2 代理创建完成：proxyId=%s", created_id)
         return created_id
 
+    def build_account_create_payload(
+        self,
+        account: dict[str, Any],
+        group_id: int,
+        proxy_id: int | None,
+    ) -> dict[str, Any]:
+        """构造 Sub2 账号创建请求体。
+
+        参数:
+            account: 单个已转换账号。
+            group_id: 本次推送目标分组。
+            proxy_id: 已解析的 Sub2 代理 ID。
+
+        返回:
+            可直接提交到 Sub2 账号创建接口的 JSON 请求体。
+        """
+
+        payload: dict[str, Any] = {
+            "name": account.get("name"),
+            "platform": account.get("platform"),
+            "type": account.get("type"),
+            "credentials": account.get("credentials"),
+            "extra": account.get("extra"),
+            "concurrency": account.get("concurrency"),
+            "priority": account.get("priority"),
+            "rate_multiplier": account.get("rate_multiplier"),
+            "auto_pause_on_expired": account.get("auto_pause_on_expired"),
+            "group_ids": [group_id],
+            "confirm_mixed_channel_risk": True,
+        }
+        notes = str(account.get("notes") or "").strip()
+        if notes:
+            payload["notes"] = notes
+        if proxy_id:
+            payload["proxy_id"] = proxy_id
+        return payload
+
+    def resolve_account_proxy_ids(
+        self,
+        accounts: list[dict[str, Any]],
+        proxies: dict[str, dict[str, Any]],
+        settings: Sub2Settings,
+        selected_proxy_id: int | None,
+    ) -> list[int | None]:
+        """按账号顺序解析 Sub2 proxy_id，避免并发创建重复代理。
+
+        参数:
+            accounts: 待创建账号列表。
+            proxies: 按 proxy_key 建立的代理索引。
+            settings: Sub2API 配置。
+            selected_proxy_id: 用户显式指定的代理 ID；存在时所有账号复用该值。
+
+        返回:
+            与账号列表一一对应的 proxy_id 列表。
+        """
+
+        if selected_proxy_id is not None:
+            return [selected_proxy_id for _account in accounts]
+
+        resolved_by_key: dict[str, int | None] = {}
+        proxy_ids: list[int | None] = []
+        for account in accounts:
+            proxy_key = str(account.get("proxy_key") or "")
+            if proxy_key not in resolved_by_key:
+                resolved_by_key[proxy_key] = self.resolve_proxy_id(proxies.get(proxy_key, {}), settings)
+            proxy_ids.append(resolved_by_key[proxy_key])
+        return proxy_ids
+
+    def create_account(
+        self,
+        account: dict[str, Any],
+        group_id: int,
+        settings: Sub2Settings,
+        proxy_id: int | None,
+    ) -> Any:
+        """创建单个 Sub2 OpenAI 账号。
+
+        参数:
+            account: 单个已转换账号。
+            group_id: 本次推送目标分组。
+            settings: Sub2API 配置。
+            proxy_id: 已解析的 Sub2 代理 ID。
+
+        返回:
+            Sub2API 创建账号响应体。
+        """
+
+        logger.info(
+            "创建 Sub2 账号：name=%s groupId=%s proxyId=%s",
+            account.get("name"),
+            group_id,
+            proxy_id,
+        )
+        response = self._request(
+            "POST",
+            normalize_sub2_accounts_url(settings.api_url),
+            settings,
+            self.build_account_create_payload(account, group_id, proxy_id),
+        )
+        result = self._sub2_json_response(response, "Sub2API 创建账号失败", "接口返回失败")
+        logger.info("Sub2 账号创建成功：name=%s groupId=%s", account.get("name"), group_id)
+        return result
+
     def create_accounts(
         self,
         data: dict[str, Any],
@@ -1366,7 +1471,7 @@ class Sub2Service:
         selected_proxy_id: int | None = None,
         progress_callback: Callable[[int], None] | None = None,
     ) -> list[Any]:
-        """逐个调用 Sub2API 创建 OpenAI 账号。
+        """受控并发调用 Sub2API 创建 OpenAI 账号。
 
         参数:
             data: 已补齐代理和分组的 Sub2 导入数据。
@@ -1380,41 +1485,27 @@ class Sub2Service:
         """
 
         proxies = proxy_by_key(data)
-        responses: list[Any] = []
-        for account in data.get("accounts") if isinstance(data.get("accounts"), list) else []:
-            if not isinstance(account, dict):
-                continue
-            proxy = proxies.get(str(account.get("proxy_key") or ""), {})
-            proxy_id = selected_proxy_id if selected_proxy_id is not None else self.resolve_proxy_id(proxy, settings)
-            logger.info(
-                "创建 Sub2 账号：name=%s groupId=%s proxyId=%s",
-                account.get("name"),
-                group_id,
-                proxy_id,
-            )
-            payload: dict[str, Any] = {
-                "name": account.get("name"),
-                "platform": account.get("platform"),
-                "type": account.get("type"),
-                "credentials": account.get("credentials"),
-                "extra": account.get("extra"),
-                "concurrency": account.get("concurrency"),
-                "priority": account.get("priority"),
-                "rate_multiplier": account.get("rate_multiplier"),
-                "auto_pause_on_expired": account.get("auto_pause_on_expired"),
-                "group_ids": [group_id],
-                "confirm_mixed_channel_risk": True,
+        raw_accounts = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+        accounts = [account for account in raw_accounts if isinstance(account, dict)]
+        if not accounts:
+            return []
+
+        proxy_ids = self.resolve_account_proxy_ids(accounts, proxies, settings, selected_proxy_id)
+        responses: list[Any] = [None] * len(accounts)
+        completed_count = 0
+        max_workers = min(SUB2_ACCOUNT_CREATE_MAX_WORKERS, len(accounts))
+        logger.info("开始并发创建 Sub2 账号：accountCount=%s workers=%s", len(accounts), max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sub2-account-create") as executor:
+            futures = {
+                executor.submit(self.create_account, account, group_id, settings, proxy_id): index
+                for index, (account, proxy_id) in enumerate(zip(accounts, proxy_ids, strict=True))
             }
-            notes = str(account.get("notes") or "").strip()
-            if notes:
-                payload["notes"] = notes
-            if proxy_id:
-                payload["proxy_id"] = proxy_id
-            response = self._request("POST", normalize_sub2_accounts_url(settings.api_url), settings, payload)
-            responses.append(self._sub2_json_response(response, "Sub2API 创建账号失败", "接口返回失败"))
-            if progress_callback:
-                progress_callback(len(responses))
-            logger.info("Sub2 账号创建成功：name=%s groupId=%s", account.get("name"), group_id)
+            for future in as_completed(futures):
+                index = futures[future]
+                responses[index] = future.result()
+                completed_count += 1
+                if progress_callback:
+                    progress_callback(completed_count)
         return responses
 
     def push_account(self, input_value: Any, group_id: int | None = None) -> dict[str, Any]:

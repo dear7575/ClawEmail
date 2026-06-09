@@ -603,15 +603,13 @@ async function waitForSub2PushJob(
   jobId: string,
   options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
 ): Promise<Sub2PushResult> {
-  const deadline = Date.now() + 180_000;
-  while (Date.now() < deadline) {
+  while (true) {
     const job = await fetchSub2PushJob(jobId);
     await options?.onPoll?.(job);
     if (job.status === "succeeded" && job.result) return job.result;
     if (job.status === "failed") throw new Error(job.error || "Sub2 推送失败");
     await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
   }
-  throw new Error("Sub2 推送仍在后台执行，请稍后刷新任务状态");
 }
 
 export async function pushOpenAiDuckAddressToSub2(
@@ -638,15 +636,13 @@ async function waitForOpenAiDuckPushJob(
   jobId: string,
   options?: { onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void> }
 ): Promise<Sub2PushResult & { email?: string }> {
-  const deadline = Date.now() + 180_000;
-  while (Date.now() < deadline) {
+  while (true) {
     const job = await fetchOpenAiDuckPushJob(jobId);
     await options?.onPoll?.(job);
     if (job.status === "succeeded" && job.result) return job.result;
     if (job.status === "failed") throw new Error(job.error || "OpenAI Duck 推送失败");
     await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
   }
-  throw new Error("OpenAI Duck 推送仍在后台执行，请稍后刷新 Duck 地址状态");
 }
 
 export async function fetchDuckAddressOpenAiPassword(duckAddressId: number): Promise<string> {
