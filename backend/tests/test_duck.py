@@ -17,11 +17,12 @@ class RecordingClient:
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
         return None
 
-    def request(self, method: str, url: str, headers: dict[str, str]):
+    def request(self, method: str, url: str, headers: dict[str, str], **kwargs):
         self.calls.append({
             "method": method,
             "url": url,
             "headers": headers,
+            "request_kwargs": kwargs,
             "kwargs": self.kwargs,
         })
         return self.responses.popleft()
@@ -123,6 +124,12 @@ def test_generate_duck_address_persists_public_shape(tmp_path, monkeypatch, test
     assert calls[0]["method"] == "POST"
     assert calls[0]["url"] == "https://quack.duckduckgo.com/api/email/addresses"
     assert calls[0]["headers"]["authorization"] == "Bearer abcdefghijklmnop"
+    assert calls[0]["headers"]["accept"] == "*/*"
+    assert calls[0]["headers"]["origin"] == "https://duckduckgo.com"
+    assert calls[0]["headers"]["referer"] == "https://duckduckgo.com/"
+    assert calls[0]["headers"]["sec-fetch-site"] == "same-site"
+    assert "Mozilla/5.0" in calls[0]["headers"]["user-agent"]
+    assert calls[0]["request_kwargs"]["content"] == b""
 
 
 def test_list_duck_addresses_supports_pagination_and_keyword(tmp_path, monkeypatch, test_client) -> None:

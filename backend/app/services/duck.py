@@ -117,6 +117,33 @@ def duck_authorization_header(token: str) -> str:
     return f"Bearer {normalize_duck_token(token)}"
 
 
+def duck_request_headers(token: str) -> dict[str, str]:
+    """生成接近 DuckDuckGo 网页端的地址接口请求头。"""
+
+    return {
+        "authorization": duck_authorization_header(token),
+        "accept": "*/*",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "cache-control": "no-cache",
+        "origin": "https://duckduckgo.com",
+        "pragma": "no-cache",
+        "priority": "u=1, i",
+        "referer": "https://duckduckgo.com/",
+        "sec-ch-ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Microsoft Edge";v="152"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "sec-gpc": "1",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0"
+        ),
+    }
+
+
 def normalize_optional_email(value: str) -> str | None:
     """归一化可选邮箱地址并校验基本格式。"""
 
@@ -426,10 +453,8 @@ class DuckService:
                 response = client.request(
                     "POST",
                     DUCK_ADDRESS_ENDPOINT,
-                    headers={
-                        "authorization": duck_authorization_header(token),
-                        "accept": "application/json",
-                    },
+                    headers=duck_request_headers(token),
+                    content=b"",
                 )
         except Exception as exc:
             logger.error("DuckDuckGo 地址接口网络异常：proxy=%s error=%s", bool(network_settings.proxy_url), exc)
