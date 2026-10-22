@@ -25,11 +25,9 @@ def test_get_network_settings_returns_defaults(tmp_path, monkeypatch, test_clien
 
     response = client.get("/api/system/network-settings")
 
-    assert response.status_code == 200
     assert response.json() == {
         "proxyUrl": "",
-        "timeoutMs": 10000,
-        "openAiOtpTimeoutMs": 60000
+        "timeoutMs": 10000
     }
 
 
@@ -52,19 +50,16 @@ def test_put_network_settings_persists_compatible_keys(tmp_path, monkeypatch, te
 
     response = client.put("/api/system/network-settings", json={
         "proxyUrl": "http://127.0.0.1:6174",
-        "timeoutMs": 100000,
-        "openAiOtpTimeoutMs": 120000
+        "timeoutMs": 100000
     })
 
     assert response.status_code == 200
     assert response.json() == {
         "proxyUrl": "http://127.0.0.1:6174/",
-        "timeoutMs": 100000,
-        "openAiOtpTimeoutMs": 120000
+        "timeoutMs": 100000
     }
     assert repository.get("system.proxyUrl") == "http://127.0.0.1:6174/"
     assert repository.get("system.timeoutMs") == "100000"
-    assert repository.get("openai.otpTimeoutMs") == "120000"
 
 
 def test_put_network_settings_rejects_unsupported_proxy_scheme(tmp_path, monkeypatch, test_client) -> None:

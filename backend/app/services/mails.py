@@ -104,8 +104,7 @@ class MailService:
         offset: int,
         keyword: str | None = None,
     ) -> dict:
-        """从本地缓存分页读取邮件列表。"""
-
+        """从本地缓存分页读取邮件列表（支持 offset）。"""
         normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
         return self.repository.list_mails(
             connection_id=connection_id,
@@ -115,10 +114,11 @@ class MailService:
             keyword=keyword.strip() if keyword else None,
         )
 
-    def detail(self, mail_id: int) -> dict | None:
-        """读取邮件详情并将本地邮件标记为已读。"""
+    def detail(self, mail_id: int, connection_id: str | None = None, mailbox_email: str | None = None) -> dict | None:
+        """读取邮件详情并标记已读（调用批量路径，避免重复标记）。"""
+        self.mark_read(connection_id=connection_id, mailbox_email=mailbox_email)
 
-        mail = self.repository.mark_mail_read(mail_id)
+        mail = self.repository.get_mail(mail_id)
         if not mail:
             return None
         return {
@@ -245,36 +245,24 @@ class MailService:
         return result
 
     def delete_remote(self, mail_id: int) -> bool:
-        """删除单封远端邮件并删除本地缓存。
-
-        参数:
-            mail_id: 本地邮件 ID。
-
-        返回:
-            本地删除是否成功；邮件不存在时按幂等成功处理。
-        """
-
+        """删除单封远端邮件并删除本地缓存并广播 SSE。"""
         mail = self.repository.get_mail(mail_id)
         if not mail:
             logger.warning("删除邮件时本地记录不存在，按幂等成功处理：mailId=%s", mail_id)
             return True
+
         logger.info("开始删除邮件：mailId=%s mailbox=%s providerMailId=%s", mail_id, mail["mailbox_email"], mail["provider_mail_id"])
         self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
         deleted = self.repository.delete_mail(mail_id)
+
+        if deleted:
+            self._broadcast_mail_event("delete", mail.get("connection_id"), mail.get("mailbox_email"))
+
         logger.info("邮件删除完成：mailId=%s success=%s", mail_id, deleted)
         return deleted
 
     def clear_remote(self, connection_id: str | None = None, mailbox_email: str | None = None) -> dict:
-        """批量删除远端邮件并清理本地缓存。
-
-        参数:
-            connection_id: 可选 Claw 连接 ID。
-            mailbox_email: 可选邮箱过滤条件。
-
-        返回:
-            删除成功/失败数量及失败明细。
-        """
-
+        """批量删除远端邮件并清理本地缓存并广播 SSE。"""
         normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
         mails = self.repository.list_mails_for_deletion(connection_id=connection_id, mailbox_email=normalized_mailbox)
         logger.info(
@@ -298,6 +286,10 @@ class MailService:
                 )
             if self.repository.delete_mail(mail["id"]):
                 deleted += 1
+
+        if deleted > 0:
+            self._broadcast_mail_event("clear_remote", connection_id, normalized_mailbox, {"deleted": deleted})
+
         result = {
             "success": True,
             "deleted": deleted,
@@ -313,19 +305,24 @@ class MailService:
         )
         return result
 
+    def _broadcast_mail_event(self, event_type: str, connection_id: str | None, mailbox_email: str | None, data: dict | None = None):
+        """统一广播 SSE 事件。"""
+        normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
+        sse_hub.broadcast("mail", {
+            "type": event_type,
+            "connectionId": connection_id,
+            "mailboxEmail": normalized_mailbox,
+            "data": data,
+        })
+
     def mark_read(self, connection_id: str | None = None, mailbox_email: str | None = None) -> dict[str, int | bool]:
-        """批量将本地邮件标记为已读。
-
-        参数:
-            connection_id: 可选 Claw 连接 ID。
-            mailbox_email: 可选邮箱过滤条件。
-
-        返回:
-            标记成功状态和本次更新的邮件数量。
-        """
-
+        """批量将本地邮件标记为已读并广播 SSE。"""
         normalized_mailbox = mailbox_email.strip().lower() if mailbox_email else None
         updated = self.repository.mark_mails_read(connection_id=connection_id, mailbox_email=normalized_mailbox)
+
+        if updated > 0:
+            self._broadcast_mail_event("mark_read", connection_id, normalized_mailbox, {"updated": updated})
+
         logger.info(
             "批量标记邮件已读完成：connection=%s mailbox=%s updated=%s",
             connection_id or "all",

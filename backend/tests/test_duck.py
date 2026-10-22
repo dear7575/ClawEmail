@@ -117,10 +117,10 @@ def test_generate_duck_address_persists_public_shape(tmp_path, monkeypatch, test
     assert address["forwarding_mailbox_email"] == "target@example.com"
     assert address["note"] == "first"
     assert address["has_openai_password"] is False
-    assert address["is_sub2_pushed"] is False
-    assert address["sub2_pushed_at"] is None
-    assert address["sub2_push_mode"] is None
-    assert address["sub2_push_email"] is None
+    assert "is_sub2_pushed" not in address
+    assert "sub2_pushed_at" not in address
+    assert "sub2_push_mode" not in address
+    assert "sub2_push_email" not in address
     assert calls[0]["method"] == "POST"
     assert calls[0]["url"] == "https://quack.duckduckgo.com/api/email/addresses"
     assert calls[0]["headers"]["authorization"] == "Bearer abcdefghijklmnop"

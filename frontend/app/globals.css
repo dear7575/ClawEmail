@@ -1335,16 +1335,10 @@ a:hover {
 .dashboard-page,
 .connections-page,
 .duck-page,
-.format-converter-page,
 .notifications-page,
 .settings-page {
     display: grid;
     gap: 16px;
-}
-
-.format-converter-page {
-    flex: 1;
-    min-height: 0;
 }
 
 .hero-board {

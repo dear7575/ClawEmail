@@ -199,10 +199,6 @@ def public_duck_address(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row["updated_at"],
         "has_openai_password": bool(row.get("openai_password")),
         "has_openai_auth_json": bool(row.get("openai_auth_json")),
-        "sub2_pushed_at": row.get("sub2_pushed_at"),
-        "sub2_push_mode": row.get("sub2_push_mode"),
-        "sub2_push_email": row.get("sub2_push_email"),
-        "is_sub2_pushed": bool(row.get("sub2_pushed_at")),
     }
 
 

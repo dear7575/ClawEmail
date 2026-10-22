@@ -69,10 +69,15 @@ class InboxSyncScheduler:
         self.wake_event.set()
 
     def _run(self) -> None:
-        """按服务端设置循环等待并触发同步。"""
+        """按服务端设置循环等待并触发同步（手动模式时不自动轮询）。"""
 
         while not self.stop_event.is_set():
             interval = self.current_interval_seconds()
+            if interval is None:
+                # 手动模式：不自动同步，由前端主动触发
+                self.wake_event.wait(30)  # 阻塞等待设置变化
+                continue
+
             wait_seconds = 5 if interval is None else interval
             self.wake_event.wait(wait_seconds)
             if self.stop_event.is_set():

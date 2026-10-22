@@ -160,7 +160,6 @@ class DuckRepository:
                 OR local_part LIKE :keyword
                 OR forwarding_mailbox_email LIKE :keyword
                 OR note LIKE :keyword
-                OR sub2_push_email LIKE :keyword
             )""")
             params["keyword"] = f"%{keyword}%"
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
@@ -264,20 +263,6 @@ class DuckRepository:
                 "openai_password": input_value.get("password", existing["openai_password"]),
                 "openai_auth_json": input_value.get("auth_json", existing["openai_auth_json"]),
             })
-        return self.get_address(address_id)
-
-    def mark_sub2_pushed(self, address_id: int, mode: str, email: str) -> dict[str, Any] | None:
-        """记录 Duck 地址最近一次成功推送到 Sub2 的状态。"""
-
-        with self.engine.begin() as connection:
-            connection.execute(text("""
-                UPDATE duck_addresses
-                SET sub2_pushed_at = CURRENT_TIMESTAMP,
-                    sub2_push_mode = :mode,
-                    sub2_push_email = :email,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
-            """), {"id": address_id, "mode": mode, "email": email})
         return self.get_address(address_id)
 
     def delete_address(self, address_id: int) -> bool:

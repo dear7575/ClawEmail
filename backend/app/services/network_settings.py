@@ -6,15 +6,11 @@ from app.db.settings_repository import SettingsRepository, settings_repository
 
 PROXY_URL_KEY = "system.proxyUrl"
 TIMEOUT_MS_KEY = "system.timeoutMs"
-OPENAI_OTP_TIMEOUT_MS_KEY = "openai.otpTimeoutMs"
 LEGACY_DUCK_PROXY_URL_KEY = "duck.proxyUrl"
 LEGACY_DUCK_TIMEOUT_MS_KEY = "duck.timeoutMs"
 DEFAULT_TIMEOUT_MS = 10000
-DEFAULT_OPENAI_OTP_TIMEOUT_MS = 60000
 MIN_TIMEOUT_MS = 1000
 MAX_TIMEOUT_MS = 120000
-MIN_OPENAI_OTP_TIMEOUT_MS = 15000
-MAX_OPENAI_OTP_TIMEOUT_MS = 300000
 
 
 class NetworkSettings(BaseModel):
@@ -22,7 +18,6 @@ class NetworkSettings(BaseModel):
 
     proxy_url: str = Field(default="", alias="proxyUrl")
     timeout_ms: int = Field(default=DEFAULT_TIMEOUT_MS, alias="timeoutMs")
-    open_ai_otp_timeout_ms: int = Field(default=DEFAULT_OPENAI_OTP_TIMEOUT_MS, alias="openAiOtpTimeoutMs")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -32,12 +27,6 @@ class NetworkSettingsUpdate(BaseModel):
 
     proxy_url: str | None = Field(default=None, alias="proxyUrl", max_length=300)
     timeout_ms: int | None = Field(default=None, alias="timeoutMs", ge=MIN_TIMEOUT_MS, le=MAX_TIMEOUT_MS)
-    open_ai_otp_timeout_ms: int | None = Field(
-        default=None,
-        alias="openAiOtpTimeoutMs",
-        ge=MIN_OPENAI_OTP_TIMEOUT_MS,
-        le=MAX_OPENAI_OTP_TIMEOUT_MS
-    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -61,16 +50,6 @@ def normalize_timeout_ms(value: int | str | None) -> int:
     except (TypeError, ValueError):
         parsed = DEFAULT_TIMEOUT_MS
     return min(MAX_TIMEOUT_MS, max(MIN_TIMEOUT_MS, parsed))
-
-
-def normalize_openai_otp_timeout_ms(value: int | str | None) -> int:
-    """归一化 OpenAI OTP 等待超时时间。"""
-
-    try:
-        parsed = round(float(value if value is not None else DEFAULT_OPENAI_OTP_TIMEOUT_MS))
-    except (TypeError, ValueError):
-        parsed = DEFAULT_OPENAI_OTP_TIMEOUT_MS
-    return min(MAX_OPENAI_OTP_TIMEOUT_MS, max(MIN_OPENAI_OTP_TIMEOUT_MS, parsed))
 
 
 def normalize_proxy_url(value: str | None) -> str:
@@ -99,27 +78,20 @@ class NetworkSettingsService:
         settings = get_settings()
         proxy_url = self.repository.get_first([PROXY_URL_KEY, LEGACY_DUCK_PROXY_URL_KEY])
         timeout_ms = self.repository.get_first([TIMEOUT_MS_KEY, LEGACY_DUCK_TIMEOUT_MS_KEY])
-        openai_timeout_ms = self.repository.get(OPENAI_OTP_TIMEOUT_MS_KEY)
         return NetworkSettings(
             proxyUrl=normalize_proxy_url(proxy_url or settings.system_proxy_url),
-            timeoutMs=normalize_timeout_ms(timeout_ms),
-            openAiOtpTimeoutMs=normalize_openai_otp_timeout_ms(openai_timeout_ms)
+            timeoutMs=normalize_timeout_ms(timeout_ms)
         )
 
     def save(self, update: NetworkSettingsUpdate) -> NetworkSettings:
         """保存网络设置。"""
 
-        current = self.get()
         next_settings = NetworkSettings(
             proxyUrl=update.proxy_url if update.proxy_url is not None else "",
-            timeoutMs=normalize_timeout_ms(update.timeout_ms),
-            openAiOtpTimeoutMs=normalize_openai_otp_timeout_ms(
-                update.open_ai_otp_timeout_ms if update.open_ai_otp_timeout_ms is not None else current.open_ai_otp_timeout_ms
-            )
+            timeoutMs=normalize_timeout_ms(update.timeout_ms)
         )
         self.repository.set(PROXY_URL_KEY, next_settings.proxy_url)
         self.repository.set(TIMEOUT_MS_KEY, str(next_settings.timeout_ms))
-        self.repository.set(OPENAI_OTP_TIMEOUT_MS_KEY, str(next_settings.open_ai_otp_timeout_ms))
         return next_settings
 
 

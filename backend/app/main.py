@@ -20,9 +20,7 @@ from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.mailboxes import router as mailboxes_router
 from app.api.mails import router as mails_router
-from app.api.openai_push import router as openai_push_router
 from app.api.send import router as send_router
-from app.api.sub2 import router as sub2_router
 from app.api.system import router as system_router
 from app.api.telegram import router as telegram_router
 from app.core.config import get_settings
@@ -52,7 +50,6 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.include_router(health_router)
     app.include_router(system_router)
-    app.include_router(sub2_router)
     app.include_router(duck_router)
     app.include_router(telegram_router)
     app.include_router(events_router)
@@ -60,7 +57,6 @@ def create_app() -> FastAPI:
     app.include_router(mailboxes_router)
     app.include_router(mails_router)
     app.include_router(send_router)
-    app.include_router(openai_push_router)
 
     @app.middleware("http")
     async def admin_authentication(request: Request, call_next):

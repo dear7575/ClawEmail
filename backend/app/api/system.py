@@ -23,7 +23,7 @@ def get_system_network_settings() -> NetworkSettings:
 def update_system_network_settings(body: NetworkSettingsUpdate) -> NetworkSettings:
     """更新系统网络设置。"""
 
-    logger.info("API 更新系统网络设置：hasProxy=%s timeoutMs=%s otpTimeoutMs=%s", bool(body.proxy_url), body.timeout_ms, body.open_ai_otp_timeout_ms)
+    logger.info("API 更新系统网络设置：hasProxy=%s timeoutMs=%s", bool(body.proxy_url), body.timeout_ms)
     return network_settings_service.save(body)
 
 
@@ -38,5 +38,5 @@ def get_duck_network_settings() -> NetworkSettings:
 def update_duck_network_settings(body: NetworkSettingsUpdate) -> NetworkSettings:
     """更新兼容旧前端路径的 Duck 网络设置。"""
 
-    logger.info("API 更新 Duck 网络设置兼容路径：hasProxy=%s timeoutMs=%s otpTimeoutMs=%s", bool(body.proxy_url), body.timeout_ms, body.open_ai_otp_timeout_ms)
+    logger.info("API 更新 Duck 网络设置兼容路径：hasProxy=%s timeoutMs=%s", bool(body.proxy_url), body.timeout_ms)
     return network_settings_service.save(body)

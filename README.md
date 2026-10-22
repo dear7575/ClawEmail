@@ -7,7 +7,7 @@
 
 ```text
 backend/
-  app/                   FastAPI 后端（SQLite + Claw/Duck/Sub2/Telegram 集成）
+  app/                   FastAPI 后端（SQLite + Claw/Duck/Telegram 集成）
     api/                 HTTP 路由，保持旧版 /api/* 响应结构兼容
     core/                配置、日志、数据库会话
     repositories/        SQLite 数据访问层
@@ -17,7 +17,7 @@ backend/
   requirements-dev.txt   后端开发与测试依赖
 frontend/
   app/                   Next.js App Router 前端
-    App.tsx              主界面：登录、邮箱、邮件、Duck、Sub2、通知、设置
+    App.tsx              主界面：登录、邮箱、邮件、Duck、通知、设置
     api.ts               前端调用层（统一 X-Admin-Password / ?token=）
     components/          收件箱、邮箱、弹窗等页面组件
   next.config.mjs        /api/* 转发到 FastAPI
@@ -42,7 +42,6 @@ scripts/
 | 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `backend/app/api/events.py`、`frontend/app/components/ListenersDrawer.tsx` |
 | Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `backend/app/api/duck.py`、`backend/app/services/duck.py`、`frontend/app/App.tsx` |
 | 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `backend/app/api/telegram.py`、`backend/app/services/telegram.py` |
-| 账号推送 | 粘贴 `temp/test.json` 结构，转换为 Sub2API 导入数据；按系统设置里的默认 OpenAI 分组推送 | `backend/app/api/sub2.py`、`backend/app/services/sub2.py` |
 | 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `frontend/app/i18n.tsx`、`frontend/app/hooks.ts` |
 
 ## 2. Claw 验证码登录链
@@ -141,18 +140,13 @@ PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保
 DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
 GET    /api/duck/addresses?accountId=
 POST   /api/duck/accounts/:id/addresses # { forwardingMailboxEmail?, note? }
+POST   /api/duck/addresses/:id/openai-login # 登录已注册账号并保存 OAuth JSON
 PATCH  /api/duck/addresses/:id          # { forwardingMailboxEmail?, note? }
 DELETE /api/duck/addresses/:id          # 删除本地生成记录，不调用 DuckDuckGo 远端
 
 GET    /api/telegram/settings            # { enabled, chatId, hasBotToken, botTokenPreview }
 PUT    /api/telegram/settings            # { enabled?, botToken?, chatId? }
 POST   /api/telegram/send                # { text }，手动发送文本到 Telegram
-
-GET    /api/sub2/settings                 # { apiUrl, hasApiKey, apiKeyPreview, defaultGroupId }
-PUT    /api/sub2/settings                 # { apiUrl?, apiKey?, defaultGroupId? }
-GET    /api/sub2/groups                   # 拉取 OpenAI active 分组供页面选择
-POST   /api/sub2/convert                  # { input }，仅转换预览，不访问 Sub2API
-POST   /api/sub2/push                     # { input, groupId? }，未传 groupId 时使用默认推送分组
 ```
 
 请求样例：
@@ -192,7 +186,7 @@ SQLite 文件由 `DATABASE_PATH` 指定（默认 `./data/app.db`），开启 `jo
 mailboxes      子邮箱：id / email(unique) / prefix / status / install_command / auth_url / comm_level ...
 mails          邮件：mailbox_email + provider_mail_id 联合唯一，含 raw_json 全文和 read_at 已读时间
 attachments    附件元数据：mail_id 外键 → mails.id（ON DELETE CASCADE）
-app_settings   key/value，存 Claw 凭据、监听设置、系统代理、Telegram 与 Sub2API 配置
+app_settings   key/value，存 Claw 凭据、监听设置、系统代理与 Telegram 配置
 duck_accounts  DuckDuckGo Email Protection Token（仅后端使用，API 返回时脱敏）
 duck_addresses 已生成的 Private Duck Address、备注、预期转发目标和原始响应
 ```
@@ -216,41 +210,9 @@ Authorization: Bearer <DDG_TOKEN>
 
 本项目会规范化保存为 `example-private-address@duck.com`。Duck Token 属于敏感凭据，只保存在后端数据库中，前端只显示前后缀掩码。当前版本只支持**生成与本地记录**，不承诺远端停用、变更转发目标或读取 Duck 收件箱；Duck 邮箱没有独立收件箱，邮件会转发到你在 DuckDuckGo 里配置的真实邮箱。
 
-## 5.2 Sub2API 账号推送
+## 5.2 OpenAI OAuth 登录
 
-“账号推送”页面接收 `temp/test.json` 结构的 ChatGPT 账号 JSON，转换为 Sub2API 的账号导入数据。推送时优先使用 `SUB2_PROXY_TEMPLATE_JSON` 中的 `proxies`；未配置模板代理时，会从 Sub2API 当前可用代理列表获取一个 active 代理并绑定账号。`temp/toSub2.json` 只是示例输出格式，不作为运行时代理配置源。
-
-推送流程：
-
-1. 从“系统设置”读取 Sub2API 地址和 APIKey。
-2. 调用 `GET /api/v1/admin/groups?page=1&page_size=1000&platform=openai&status=active` 获取 OpenAI 可用分组。
-3. 在“系统设置”里保存默认推送分组。
-4. 未配置 `SUB2_PROXY_TEMPLATE_JSON` 时，从 `GET /api/v1/admin/proxies?page=1&page_size=1&status=active&sort_by=id&sort_order=desc` 获取可用代理。
-5. 调用 Sub2API 创建账号，账号写入 `group_ids: [默认分组ID]`。
-
-Sub2API 地址可以填写根地址，例如 `https://sub2.example.com`，也可以填写完整 `/api/v1/admin/accounts/data` 导入地址。Admin API Key 会按 Sub2API 约定放到 `x-api-key` 请求头；如果配置值以 `Bearer ` 开头，则按 JWT 令牌放到 `Authorization` 请求头。
-
-## 5.3 OpenAI 手机号注册测试流程
-
-该流程仅用于测试 OpenAI 手机号注册链路，不作为当前正式自动化注册能力。测试目标是从手机号入口直接完成注册/登录合并流程，而不是先用邮箱注册后再处理 `add-phone` 补手机号分支。
-
-预期测试路径：
-
-1. 打开 `https://auth.openai.com/log-in?usernameKind=phone_number`。
-2. 通过 `https://hero-sms.com/stubs/handler_api.php` 获取临时手机号；`.env` 中使用 `HERO_SMS_API_KEY` 保存 HeroSMS API Key，代码和日志不得输出明文 Key。
-3. HeroSMS 使用 SMS-Activate 兼容接口；OpenAI 服务 code 为 `dr`。当前测试可优先使用英国号码，HeroSMS country 为 `16`，OpenAI 页面国家码选择 `GB` / `+44`，输入手机号时去掉 `44` 国家码，只填本地号码。
-4. 在 OpenAI 手机号入口提交号码后，进入密码页。该链路用于测试时把该步骤视为“创建/提交测试密码”步骤，测试密码可先使用 `6174`。
-5. 提交密码后，如果进入短信验证码页，则轮询 HeroSMS `getStatusV2` 获取验证码，收到验证码后回填 OpenAI 页面。
-6. 验证成功后继续沿用现有 OpenAI 授权 JSON 保存和 Sub2API 推送流程；下游仍需确认授权 JSON 是否包含 `email`，否则当前 `convert_openai_oauth_to_sub2` 会拒绝转换。
-
-HeroSMS 激活单处理规则：
-
-- 成功收到验证码并完成验证后，调用 `setStatus&id=<activationId>&status=6` 标记完成。
-- 未进入短信验证码页、流程失败或放弃测试时，调用 `setStatus&id=<activationId>&status=8` 取消激活。
-- 若 HeroSMS 返回 `EARLY_CANCEL_DENIED`，需要等待最小激活时间后重试取消，避免号码长期占用。
-- 测试过程不得在文档、日志或前端界面展示完整手机号；只保留 `activationId`、国家、服务 code 和脱敏号码用于排查。
-
-2026-05-15 的手工验证记录：OpenAI 登录页存在“使用电话号码继续”入口，提交英国 HeroSMS 号码后会进入 `/log-in/password`。测试提交 `6174` 时页面返回 `Incorrect phone number or password`，未进入短信验证码页；相关 HeroSMS 激活单已取消，余额恢复。后续如果继续测试，应按上面的流程重新取号并重点确认密码提交后的短信验证码页是否出现。
+Duck 地址记录可保存已注册 OpenAI 账号的密码及 OAuth JSON，供独立登录和本地管理使用。自动登录仅支持已注册账号，不包含账号注册流程；登录凭据仅保存在后端，不向界面返回令牌。
 
 ## 6. 监听器与重连
 
@@ -274,7 +236,7 @@ DATA_DIR=./data
 DATABASE_PATH=./data/app.db
 ```
 
-`.env` 只保留启动配置和本地数据库路径。Claw、系统代理、Telegram、Sub2API 等业务配置通过 Web 的“系统设置”写入 SQLite，不再放到 `.env`。
+`.env` 只保留启动配置和本地数据库路径。Claw、系统代理、Telegram 等业务配置通过 Web 的“系统设置”写入 SQLite，不再放到 `.env`。
 
 ## 8. 本地运行
 
@@ -338,7 +300,7 @@ BACKEND_URL=http://127.0.0.1:8000
 DATABASE_PATH=./data/app.db
 ```
 
-如果容器无法直连 DuckDuckGo、Telegram 或 Sub2API，可以在 Web 的“系统设置”里填写系统代理地址。代理地址支持 `http://host:port` / `https://host:port`，例如 Docker Desktop 场景常见为 `http://host.docker.internal:7890`。
+如果容器无法直连 DuckDuckGo 或 Telegram，可以在 Web 的“系统设置”里填写系统代理地址。
 
 ## 10. Python + Next.js 工作区
 
@@ -388,6 +350,7 @@ DATABASE_PATH=./data/app.db
 - `DELETE /api/duck/accounts/:id`
 - `GET /api/duck/addresses`
 - `POST /api/duck/accounts/:id/addresses`
+- `POST /api/duck/addresses/:id/openai-login`
 - `PATCH /api/duck/addresses/:id`
 - `DELETE /api/duck/addresses/:id`
 - `GET /api/duck/addresses/:id/openai-password`
@@ -396,12 +359,6 @@ DATABASE_PATH=./data/app.db
 - `GET /api/telegram/settings`
 - `PUT /api/telegram/settings`
 - `POST /api/telegram/send`
-- `GET /api/sub2/settings`
-- `PUT /api/sub2/settings`
-- `GET /api/sub2/groups`
-- `POST /api/sub2/convert`
-- `POST /api/sub2/push`
-- `POST /api/openai/duck-push-sub2`
 
 后端启动：
 

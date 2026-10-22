@@ -1,7 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from "react";
 import {CommunicationRulesDrawer} from "./components/CommunicationRulesDrawer";
 import {ComposeDrawer} from "./components/ComposeDrawer";
-import {FormatConverterView} from "./components/FormatConverterView";
 import {InboxView} from "./components/InboxView";
 import {ListenersDrawer} from "./components/ListenersDrawer";
 import {MailboxesView} from "./components/MailboxesView";
@@ -11,7 +10,7 @@ import {Dialog, DialogContent, DialogDescription, DialogTitle} from "./component
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./components/ui/select";
 import {PrefsBar, usePrefs} from "./i18n";
 import {parseServerTime} from "./time";
-import {LogOut, Menu, Pencil, Send, Trash2, X} from "lucide-react";
+import {LogIn, LogOut, Menu, Pencil, Trash2, X} from "lucide-react";
 import {
     type ClawAuthStatus,
     createDuckAccount,
@@ -34,42 +33,32 @@ import {
     fetchMail,
     fetchMailboxes,
     fetchMails,
-    fetchSub2Groups,
-    fetchSub2Proxies,
-    fetchSub2Settings,
     fetchSystemNetworkSettings,
     fetchTelegramSettings,
     generateDuckAddress,
     getAdminPassword,
+    loginDuckOpenAiAccount,
     type ListenerSettings,
     type ListenerSnapshot,
     type Mailbox,
     type MailDetail,
     type MailSummary,
-    pushOpenAiDuckAddressToSub2,
-    pushSub2Data,
     refreshConnection,
     sendConnectionLoginCode,
     sendTelegramNotification,
     setAdminPassword,
-    type Sub2Group,
-    type Sub2PushJobStatus,
-    type Sub2Proxy,
-    type Sub2Settings,
-    type SystemNetworkSettings,
     type TelegramSettings,
     updateDuckAccountToken,
     updateDuckAddress,
     updateDuckAddressOpenAiCredentials,
     updateListenerSettings,
-    updateSub2Settings,
     updateSystemNetworkSettings,
     updateTelegramSettings,
     verifyAdminPassword,
     verifyConnectionLoginCode
 } from "./api";
 
-type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "formatConvert" | "notifications" | "settings";
+type View = "dashboard" | "connections" | "mailboxes" | "duck" | "inbox" | "notifications" | "settings";
 type ToastItem = {
     id: number;
     type: "success" | "error";
@@ -106,7 +95,6 @@ function readInitialView(): View {
     const saved = localStorage.getItem(VIEW_STORAGE_KEY);
     return saved === "connections" || saved === "mailboxes" || saved === "inbox" || saved === "settings"
     || saved === "notifications"
-    || saved === "formatConvert"
     || saved === "duck"
         ? saved
         : "dashboard";
@@ -119,7 +107,6 @@ function titleForView(view: View): string {
         mailboxes: "Claw 邮箱",
         duck: "Duck 邮箱",
         inbox: "收件管理",
-        formatConvert: "格式转换",
         notifications: "消息通知",
         settings: "系统设置"
     };
@@ -144,11 +131,6 @@ function statusLabel(connection: ClawAuthStatus): string {
     if (connection.connected) return "在线";
     if (connection.status === "disconnected") return "已断开";
     return "未完整";
-}
-
-function formatSub2ProxyLabel(proxy: Sub2Proxy): string {
-    const name = proxy.name?.trim() || proxy.host || "代理";
-    return `${name} (#${proxy.id})`;
 }
 
 function normalizeLoginName(value: string): string {
@@ -181,8 +163,7 @@ function duckAddressMatchesKeyword(address: DuckAddress, keyword: string): boole
         address.address,
         address.local_part,
         address.forwarding_mailbox_email,
-        address.note,
-        address.sub2_push_email
+        address.note
     ].some((value) => containsKeyword(value, keyword));
 }
 
@@ -260,42 +241,20 @@ export function App() {
     });
     const [systemProxyInput, setSystemProxyInput] = useState("");
     const [systemTimeoutInput, setSystemTimeoutInput] = useState("10000");
-    const [openAiOtpTimeoutInput, setOpenAiOtpTimeoutInput] = useState("60000");
     const [telegramSettings, setTelegramSettings] = useState<TelegramSettings>({
         enabled: false,
         chatId: "",
         hasBotToken: false,
         botTokenPreview: null
     });
-    const [sub2Settings, setSub2Settings] = useState<Sub2Settings>({
-        apiUrl: "",
-        hasApiKey: false,
-        apiKeyPreview: null,
-        defaultGroupId: null,
-        defaultProxyId: null,
-        openAiAuthLoginEnabled: true
-    });
     const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
     const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
     const [telegramChatIdInput, setTelegramChatIdInput] = useState("");
-    const [sub2ApiUrlInput, setSub2ApiUrlInput] = useState("");
-    const [sub2ApiKeyInput, setSub2ApiKeyInput] = useState("");
-    const [sub2OpenAiAuthLoginEnabledInput, setSub2OpenAiAuthLoginEnabledInput] = useState(true);
     const [settingsBusy, setSettingsBusy] = useState(false);
     const [telegramMessage, setTelegramMessage] = useState("");
     const [telegramSendBusy, setTelegramSendBusy] = useState(false);
-    const [sub2Groups, setSub2Groups] = useState<Sub2Group[]>([]);
-    const [selectedSub2GroupId, setSelectedSub2GroupId] = useState("");
-    const [sub2GroupsBusy, setSub2GroupsBusy] = useState(false);
-    const [sub2Proxies, setSub2Proxies] = useState<Sub2Proxy[]>([]);
-    const [selectedSub2ProxyId, setSelectedSub2ProxyId] = useState("");
-    const [sub2ProxiesBusy, setSub2ProxiesBusy] = useState(false);
-    const [formatConvertPushBusy, setFormatConvertPushBusy] = useState(false);
-    const [sub2DefaultGroupIdInput, setSub2DefaultGroupIdInput] = useState("");
-    const [sub2DefaultProxyIdInput, setSub2DefaultProxyIdInput] = useState("");
-    const [sub2DefaultProxyTouched, setSub2DefaultProxyTouched] = useState(false);
-    const [openAiPushBusyDuckAddressId, setOpenAiPushBusyDuckAddressId] = useState<number | null>(null);
     const [openAiPasswordCopyBusyDuckAddressId, setOpenAiPasswordCopyBusyDuckAddressId] = useState<number | null>(null);
+    const [openAiLoginBusyDuckAddressId, setOpenAiLoginBusyDuckAddressId] = useState<number | null>(null);
     const [duckAddressEditorAddress, setDuckAddressEditorAddress] = useState<DuckAddress | null>(null);
     const [duckAddressEditorForwardingMailbox, setDuckAddressEditorForwardingMailbox] = useState("");
     const [duckAddressEditorNote, setDuckAddressEditorNote] = useState("");
@@ -392,7 +351,6 @@ export function App() {
         return {running, total: visibleListeners.length, errors};
     }, [visibleListeners]);
 
-    const sub2Ready = Boolean(sub2Settings.apiUrl && sub2Settings.hasApiKey && sub2Settings.defaultGroupId);
 
     function removeToast(id: number) {
         setToasts((items) => items.filter((item) => item.id !== id));
@@ -625,7 +583,6 @@ export function App() {
         loadServerListenerSettings().catch(reportError);
         loadSystemNetworkSettings().catch(reportError);
         loadTelegramSettings().catch(reportError);
-        loadSub2Settings().catch(reportError);
         loadDuckAccounts()
             .then(() => fetchDuckAddresses({limit: DEFAULT_LIST_PAGE_SIZE, offset: 0}))
             .then((data) => {
@@ -697,24 +654,6 @@ export function App() {
         duckBusy,
         duckAddressRefreshBusy
     ]);
-
-    useEffect(() => {
-        if (!password || view !== "formatConvert") return;
-        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
-        loadSub2Groups().catch(reportError);
-    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
-
-    useEffect(() => {
-        if (!password || view !== "formatConvert") return;
-        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
-        loadSub2Proxies().catch(reportError);
-    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
-
-    useEffect(() => {
-        if (!password || view !== "settings") return;
-        if (!sub2Settings.apiUrl || !sub2Settings.hasApiKey) return;
-        loadSub2Groups().catch(reportError);
-    }, [password, view, sub2Settings.apiUrl, sub2Settings.hasApiKey]);
 
     useEffect(() => {
         if (!password || view !== "duck") return;
@@ -924,15 +863,11 @@ export function App() {
         }
     }
 
-    function applySystemNetworkSettings(settings: SystemNetworkSettings) {
-        setSystemProxyInput(settings.proxyUrl);
-        setSystemTimeoutInput(String(settings.timeoutMs));
-        setOpenAiOtpTimeoutInput(String(settings.openAiOtpTimeoutMs));
-    }
-
     async function loadSystemNetworkSettings() {
         try {
-            applySystemNetworkSettings(await fetchSystemNetworkSettings());
+            const settings = await fetchSystemNetworkSettings();
+            setSystemProxyInput(settings.proxyUrl);
+            setSystemTimeoutInput(String(settings.timeoutMs));
         } catch (err) {
             reportError(err);
         }
@@ -944,45 +879,31 @@ export function App() {
             showError("系统请求超时时间必须是数字");
             return;
         }
-        const openAiOtpTimeoutMs = Number(openAiOtpTimeoutInput);
-        if (!Number.isFinite(openAiOtpTimeoutMs)) {
-            showError("OpenAI 验证码等待超时时间必须是数字");
-            return;
-        }
         setSettingsBusy(true);
         try {
-            const [listenerSaved, networkSaved, telegramSaved, sub2Saved] = await Promise.all([
+            const [listenerSaved, networkSaved, telegramSaved] = await Promise.all([
                 updateListenerSettings(serverListenerSettings),
                 updateSystemNetworkSettings({
                     proxyUrl: systemProxyInput.trim(),
-                    timeoutMs,
-                    openAiOtpTimeoutMs
+                    timeoutMs
                 }),
                 updateTelegramSettings({
                     enabled: telegramEnabledInput,
                     chatId: telegramChatIdInput.trim(),
                     botToken: telegramBotTokenInput.trim() || undefined
-                }),
-                updateSub2Settings({
-                    apiUrl: sub2ApiUrlInput.trim(),
-                    apiKey: sub2ApiKeyInput.trim() || undefined,
-                    defaultGroupId: sub2DefaultGroupIdInput ? Number(sub2DefaultGroupIdInput) : null,
-                    defaultProxyId: sub2DefaultProxyIdInput ? Number(sub2DefaultProxyIdInput) : null,
-                    openAiAuthLoginEnabled: sub2OpenAiAuthLoginEnabledInput
                 })
             ]);
             setServerListenerSettings(listenerSaved);
-            applySystemNetworkSettings(networkSaved);
+            setSystemProxyInput(networkSaved.proxyUrl);
+            setSystemTimeoutInput(String(networkSaved.timeoutMs));
             applyTelegramSettings(telegramSaved);
-            applySub2Settings(sub2Saved);
             showStatus("系统配置已保存");
         } catch (err) {
             reportError(err);
             await Promise.all([
                 loadServerListenerSettings(),
                 loadSystemNetworkSettings(),
-                loadTelegramSettings(),
-                loadSub2Settings()
+                loadTelegramSettings()
             ]);
         } finally {
             setSettingsBusy(false);
@@ -1004,134 +925,6 @@ export function App() {
         }
     }
 
-    function applySub2Settings(settings: Sub2Settings) {
-        setSub2Settings(settings);
-        setSub2ApiUrlInput(settings.apiUrl);
-        setSub2ApiKeyInput("");
-        setSub2DefaultGroupIdInput(settings.defaultGroupId ? String(settings.defaultGroupId) : "");
-        setSub2DefaultProxyIdInput(settings.defaultProxyId ? String(settings.defaultProxyId) : "");
-        setSub2DefaultProxyTouched(false);
-        setSub2OpenAiAuthLoginEnabledInput(settings.openAiAuthLoginEnabled);
-    }
-
-    async function loadSub2Settings() {
-        try {
-            applySub2Settings(await fetchSub2Settings());
-        } catch (err) {
-            reportError(err);
-        }
-    }
-
-    async function loadSub2Groups() {
-        setSub2GroupsBusy(true);
-        try {
-            const groups = await fetchSub2Groups();
-            setSub2Groups(groups);
-            setSelectedSub2GroupId((current) => {
-                const defaultGroupId = sub2Settings.defaultGroupId ? String(sub2Settings.defaultGroupId) : "";
-                if (defaultGroupId && groups.some((group) => String(group.id) === defaultGroupId)) return defaultGroupId;
-                if (current && groups.some((group) => String(group.id) === current)) return current;
-                return groups[ 0 ]?.id ? String(groups[ 0 ].id) : "";
-            });
-            setSub2DefaultGroupIdInput((current) => {
-                if (current && groups.some((group) => String(group.id) === current)) return current;
-                const defaultGroupId = sub2Settings.defaultGroupId ? String(sub2Settings.defaultGroupId) : "";
-                if (defaultGroupId && groups.some((group) => String(group.id) === defaultGroupId)) return defaultGroupId;
-                return groups[ 0 ]?.id ? String(groups[ 0 ].id) : "";
-            });
-        } catch (err) {
-            setSub2Groups([]);
-            setSelectedSub2GroupId("");
-            reportError(err);
-        } finally {
-            setSub2GroupsBusy(false);
-        }
-    }
-
-    async function loadSub2Proxies() {
-        setSub2ProxiesBusy(true);
-        try {
-            const proxies = await fetchSub2Proxies();
-            setSub2Proxies(proxies);
-            setSelectedSub2ProxyId((current) => {
-                if (current && proxies.some((proxy) => String(proxy.id) === current)) return current;
-                return "";
-            });
-            setSub2DefaultProxyIdInput((current) => {
-                if (sub2DefaultProxyTouched) {
-                    return current && proxies.some((proxy) => String(proxy.id) === current) ? current : "";
-                }
-                if (current && proxies.some((proxy) => String(proxy.id) === current)) return current;
-                const defaultProxyId = sub2Settings.defaultProxyId ? String(sub2Settings.defaultProxyId) : "";
-                if (defaultProxyId && proxies.some((proxy) => String(proxy.id) === defaultProxyId)) return defaultProxyId;
-                return "";
-            });
-        } catch (err) {
-            setSub2Proxies([]);
-            setSelectedSub2ProxyId("");
-            setSub2DefaultProxyIdInput("");
-            reportError(err);
-        } finally {
-            setSub2ProxiesBusy(false);
-        }
-    }
-
-    async function handlePushFormatConvertedSub2Data(
-        data: unknown,
-        groupId: number,
-        proxyId?: number | null,
-        options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
-    ) {
-        setFormatConvertPushBusy(true);
-        try {
-            const result = await pushSub2Data(data, groupId, proxyId, options);
-            showStatus("账号已推送到 Sub2API");
-            return result;
-        } catch (err) {
-            reportError(err);
-            throw err;
-        } finally {
-            setFormatConvertPushBusy(false);
-        }
-    }
-
-    async function handlePushOpenAiDuckAddressToSub2(address: DuckAddress) {
-        if (!sub2Settings.defaultGroupId) {
-            showError("请先在系统设置里选择 OpenAI 邮箱默认推送分组");
-            return;
-        }
-        if (!address.forwarding_mailbox_email) {
-            showError("该 Duck 邮箱没有绑定目标 Claw 邮箱，无法读取 OpenAI 验证码");
-            return;
-        }
-        setOpenAiPushBusyDuckAddressId(address.id);
-        try {
-            const refreshDuckAddresses = async () => {
-                await loadDuckAddresses(selectedDuckAccountId).catch(reportError);
-            };
-            const result = await pushOpenAiDuckAddressToSub2(
-                address.id,
-                sub2Settings.defaultGroupId,
-                {onPoll: refreshDuckAddresses}
-            );
-            await loadDuckAddresses(selectedDuckAccountId);
-            const modeText = result.pushMode === "sub2_auth"
-                ? "Sub2 授权创建"
-                : result.pushMode === "fallback_oauth_token"
-                    ? `OAuth token 推送（授权分支已降级：${result.fallbackReason ?? "未知原因"}）`
-                    : "OAuth token 推送";
-            showStatus(
-                result.telegram?.sent === false
-                    ? `OpenAI 账号已推送到 Sub2API（${modeText}），Telegram 发送失败：${result.telegram.error ?? "未知错误"}`
-                    : `OpenAI 账号已推送到 Sub2API（${modeText}）· ${result.email || address.address}`
-            );
-        } catch (err) {
-            reportError(err);
-        } finally {
-            setOpenAiPushBusyDuckAddressId(null);
-        }
-    }
-
     async function handleCopyDuckOpenAiPassword(address: DuckAddress) {
         if (!address.has_openai_password) return;
         setOpenAiPasswordCopyBusyDuckAddressId(address.id);
@@ -1143,6 +936,23 @@ export function App() {
             reportError(err);
         } finally {
             setOpenAiPasswordCopyBusyDuckAddressId(null);
+        }
+    }
+
+    async function handleLoginDuckOpenAiAccount(address: DuckAddress) {
+        if (!address.forwarding_mailbox_email) {
+            showError("该 Duck 邮箱没有绑定目标 Claw 邮箱，无法读取 OpenAI 验证码");
+            return;
+        }
+        setOpenAiLoginBusyDuckAddressId(address.id);
+        try {
+            const result = await loginDuckOpenAiAccount(address.id);
+            await loadDuckAddresses(selectedDuckAccountId);
+            showStatus(`OpenAI OAuth 登录成功 · ${result.email}`);
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setOpenAiLoginBusyDuckAddressId(null);
         }
     }
 
@@ -1493,9 +1303,6 @@ export function App() {
                     <button className={view === "duck" ? "active" : ""} onClick={() => switchView("duck")}>
                         <span>Duck 邮箱</span>
                         <span className="count">{duckAddressCount}</span>
-                    </button>
-                    <button className={view === "formatConvert" ? "active" : ""} onClick={() => switchView("formatConvert")}>
-                        <span>格式转换</span>
                     </button>
                     <button className={view === "notifications" ? "active" : ""}
                             onClick={() => switchView("notifications")}>
@@ -1882,11 +1689,6 @@ export function App() {
                                                     title="点击复制 Duck 邮箱"
                                                 >
                                                     <span className="e">{item.address}</span>
-                                                    {item.is_sub2_pushed ? (
-                                                        <span className="pref">
-                                                            Sub2 已推送 · {formatServerTime(item.sub2_pushed_at)}
-                                                        </span>
-                                                    ) : null}
                                                 </button>
                                             </div>
                                             <span className="time-cell" data-label="目标邮箱">{item.forwarding_mailbox_email ?? "—"}</span>
@@ -1917,20 +1719,15 @@ export function App() {
                                             <span className="time-cell" data-label="创建于">{formatServerTime(item.created_at)}</span>
                                             <div className="ops" data-label="操作">
                                                 <button
-                                                    className={`icon-btn ${item.is_sub2_pushed ? "success" : ""}`}
-                                                    onClick={() => handlePushOpenAiDuckAddressToSub2(item)}
-                                                    disabled={
-                                                        item.status !== "active" ||
-                                                        !item.forwarding_mailbox_email ||
-                                                        !sub2Ready ||
-                                                        openAiPushBusyDuckAddressId === item.id
-                                                    }
-                                                    title={!item.forwarding_mailbox_email ? "需要先绑定目标 Claw 邮箱" : undefined}
-                                                    aria-label={item.is_sub2_pushed ? "已推送 Sub2" : "推送 Sub2"}
+                                                    className="icon-btn"
+                                                    onClick={() => handleLoginDuckOpenAiAccount(item)}
+                                                    disabled={item.status !== "active" || !item.forwarding_mailbox_email || openAiLoginBusyDuckAddressId === item.id}
+                                                    title={!item.forwarding_mailbox_email ? "需要先绑定目标 Claw 邮箱" : "登录已注册 OpenAI 账号并保存 OAuth"}
+                                                    aria-label="OpenAI OAuth 登录"
                                                 >
-                                                    {openAiPushBusyDuckAddressId === item.id
+                                                    {openAiLoginBusyDuckAddressId === item.id
                                                         ? "..."
-                                                        : <Send size={14} aria-hidden="true"/>}
+                                                        : <LogIn size={14} aria-hidden="true"/>}
                                                 </button>
                                                 <button
                                                     className="icon-btn"
@@ -2006,25 +1803,6 @@ export function App() {
                         onReplied={(msg) => showStatus(msg)}
                         onError={reportError}
                         adminPassword={password}
-                    />
-                )}
-
-                {view === "formatConvert" && (
-                    <FormatConverterView
-                        sub2Settings={sub2Settings}
-                        sub2Groups={sub2Groups}
-                        selectedSub2GroupId={selectedSub2GroupId}
-                        sub2GroupsBusy={sub2GroupsBusy}
-                        sub2Proxies={sub2Proxies}
-                        selectedSub2ProxyId={selectedSub2ProxyId}
-                        sub2ProxiesBusy={sub2ProxiesBusy}
-                        pushBusy={formatConvertPushBusy}
-                        onSelectedSub2GroupIdChange={setSelectedSub2GroupId}
-                        onSelectedSub2ProxyIdChange={setSelectedSub2ProxyId}
-                        onRefreshSub2Groups={loadSub2Groups}
-                        onRefreshSub2Proxies={loadSub2Proxies}
-                        onPushSub2Data={handlePushFormatConvertedSub2Data}
-                        onOpenSettings={() => switchView("settings")}
                     />
                 )}
 
@@ -2236,21 +2014,6 @@ export function App() {
                                     disabled={settingsBusy}
                                 />
                             </div>
-                            <div className="setting-row">
-                                <span>
-                                    <strong>OpenAI 验证码等待超时</strong>
-                                    <small>等待 Claw 邮箱收到 OpenAI 验证码的最长时间，单位毫秒，默认 60000。</small>
-                                </span>
-                                <input
-                                    type="number"
-                                    min={15000}
-                                    max={300000}
-                                    step={1000}
-                                    value={openAiOtpTimeoutInput}
-                                    onChange={(event) => setOpenAiOtpTimeoutInput(event.target.value)}
-                                    disabled={settingsBusy}
-                                />
-                            </div>
                             <label className="setting-row">
                                 <span>
                                     <strong>Telegram 消息通知</strong>
@@ -2288,107 +2051,6 @@ export function App() {
                                     disabled={settingsBusy}
                                 />
                             </div>
-                            <div className="setting-row">
-                                <span>
-                                    <strong>Sub2API 地址</strong>
-                                    <small>填写 Sub2API 根地址或完整 /admin/accounts/data 导入地址，根地址会自动补齐 /api/v1/admin/accounts/data。</small>
-                                </span>
-                                <input
-                                    value={sub2ApiUrlInput}
-                                    onChange={(event) => setSub2ApiUrlInput(event.target.value)}
-                                    placeholder="https://sub2.example.com"
-                                    disabled={settingsBusy}
-                                />
-                            </div>
-                            <div className="setting-row">
-                                <span>
-                                    <strong>Sub2API APIKey</strong>
-                                    <small>{sub2Settings.apiKeyPreview ? `当前已配置：${sub2Settings.apiKeyPreview}` : "用于调用 Sub2API 管理接口，保存后不会明文显示。"}</small>
-                                </span>
-                                <input
-                                    type="password"
-                                    value={sub2ApiKeyInput}
-                                    onChange={(event) => setSub2ApiKeyInput(event.target.value)}
-                                    placeholder={sub2Settings.hasApiKey ? "留空则保留当前 APIKey" : "APIKey"}
-                                    disabled={settingsBusy}
-                                />
-                            </div>
-                            <div className="setting-row">
-                                <span>
-                                    <strong>OpenAI 邮箱默认推送分组</strong>
-                                    <small>Duck 邮箱列表的一键推送会使用该分组；格式转换页可在推送前单独选择分组和代理。</small>
-                                </span>
-                                <div className="setting-select-control">
-                                    <Select
-                                        value={sub2DefaultGroupIdInput}
-                                        onValueChange={setSub2DefaultGroupIdInput}
-                                        onOpenChange={(open) => {
-                                            if (open && sub2ApiUrlInput.trim() && sub2Settings.hasApiKey && !sub2GroupsBusy) {
-                                                loadSub2Groups().catch(reportError);
-                                            }
-                                        }}
-                                        disabled={settingsBusy || sub2GroupsBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
-                                    >
-                                        <SelectTrigger className="toolbar-select setting-select-trigger">
-                                            <SelectValue placeholder={sub2GroupsBusy ? "加载中" : "选择分组"} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {sub2Groups.map((group) => (
-                                                <SelectItem key={group.id} value={String(group.id)}>
-                                                    {group.name ? `${group.name} (#${group.id})` : `分组 #${group.id}`}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {!sub2GroupsBusy && !sub2Groups.length && <span>暂无可用分组</span>}
-                                </div>
-                            </div>
-                            <div className="setting-row">
-                                <span>
-                                    <strong>OpenAI 邮箱默认代理</strong>
-                                    <small>Duck 邮箱列表的一键推送会优先绑定该代理；留空时按 Sub2 可用代理自动选择。</small>
-                                </span>
-                                <div className="setting-select-control">
-                                    <Select
-                                        value={sub2DefaultProxyIdInput || "__auto"}
-                                        onValueChange={(value) => {
-                                            setSub2DefaultProxyTouched(true);
-                                            setSub2DefaultProxyIdInput(value === "__auto" ? "" : value);
-                                        }}
-                                        onOpenChange={(open) => {
-                                            if (open && sub2ApiUrlInput.trim() && sub2Settings.hasApiKey && !sub2ProxiesBusy) {
-                                                loadSub2Proxies().catch(reportError);
-                                            }
-                                        }}
-                                        disabled={settingsBusy || sub2ProxiesBusy || !sub2ApiUrlInput.trim() || !sub2Settings.hasApiKey}
-                                    >
-                                        <SelectTrigger className="toolbar-select setting-select-trigger">
-                                            <SelectValue placeholder={sub2ProxiesBusy ? "加载中" : "选择代理"} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="__auto">自动选择代理</SelectItem>
-                                            {sub2Proxies.map((proxy) => (
-                                                <SelectItem key={proxy.id} value={String(proxy.id)}>
-                                                    {formatSub2ProxyLabel(proxy)}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {!sub2ProxiesBusy && !sub2Proxies.length && <span>暂无可用代理</span>}
-                                </div>
-                            </div>
-                            <label className="setting-row">
-                                <span>
-                                    <strong>Sub2 授权登录创建</strong>
-                                    <small>开启后优先走 Sub2 授权登录分支；关闭后自动登录拿到 token 后直接创建账号。</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={sub2OpenAiAuthLoginEnabledInput}
-                                    onChange={(event) => setSub2OpenAiAuthLoginEnabledInput(event.target.checked)}
-                                    disabled={settingsBusy}
-                                />
-                            </label>
                             <div className="settings-actions">
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>
                                     {listenerBusy ? "刷新中" : "立即刷新监听状态"}

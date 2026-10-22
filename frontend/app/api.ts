@@ -100,10 +100,6 @@ export type DuckAddress = {
   raw_json: string;
   has_openai_password: boolean;
   has_openai_auth_json: boolean;
-  sub2_pushed_at: string | null;
-  sub2_push_mode: string | null;
-  sub2_push_email: string | null;
-  is_sub2_pushed: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -111,7 +107,6 @@ export type DuckAddress = {
 export type SystemNetworkSettings = {
   proxyUrl: string;
   timeoutMs: number;
-  openAiOtpTimeoutMs: number;
 };
 
 export type TelegramSettings = {
@@ -119,62 +114,6 @@ export type TelegramSettings = {
   chatId: string;
   hasBotToken: boolean;
   botTokenPreview: string | null;
-};
-
-export type Sub2Settings = {
-  apiUrl: string;
-  hasApiKey: boolean;
-  apiKeyPreview: string | null;
-  defaultGroupId: number | null;
-  defaultProxyId: number | null;
-  openAiAuthLoginEnabled: boolean;
-};
-
-export type Sub2Group = {
-  id: number;
-  name?: string;
-};
-
-export type Sub2Proxy = {
-  id: number;
-  name?: string | null;
-  protocol?: string | null;
-  host?: string | null;
-  port?: number | null;
-  username?: string | null;
-};
-
-export type Sub2PushResult = {
-  success?: boolean;
-  data: unknown;
-  response?: unknown;
-  pushMode?: "sub2_auth" | "oauth_token" | "fallback_oauth_token";
-  fallbackReason?: string;
-  telegram?: {
-    sent: boolean;
-    error?: string;
-  };
-};
-
-export type Sub2PushJobStatus = {
-  success: boolean;
-  jobId: string;
-  status: "running" | "succeeded" | "failed";
-  groupId?: number | null;
-  proxyId?: number | null;
-  accountCount: number;
-  pushedCount: number;
-  progress: number;
-  result?: Sub2PushResult | null;
-  error?: string | null;
-};
-
-export type OpenAiDuckPushJobStatus = {
-  success: boolean;
-  jobId: string;
-  status: "running" | "succeeded" | "failed";
-  result?: (Sub2PushResult & { email?: string }) | null;
-  error?: string | null;
 };
 
 export type RuntimeMode = "server" | "unknown";
@@ -554,95 +493,11 @@ export async function sendTelegramNotification(text: string): Promise<void> {
   });
 }
 
-export async function fetchSub2Settings(): Promise<Sub2Settings> {
-  return requestJson<Sub2Settings>("/api/sub2/settings");
-}
-
-export async function updateSub2Settings(input: {
-  apiUrl?: string;
-  apiKey?: string;
-  defaultGroupId?: number | null;
-  defaultProxyId?: number | null;
-  openAiAuthLoginEnabled?: boolean;
-}): Promise<Sub2Settings> {
-  return requestJson<Sub2Settings>("/api/sub2/settings", {
-    method: "PUT",
-    body: JSON.stringify(input)
-  });
-}
-
-export async function fetchSub2Groups(): Promise<Sub2Group[]> {
-  const result = await requestJson<{ items: Sub2Group[] }>("/api/sub2/groups");
-  return result.items;
-}
-
-export async function fetchSub2Proxies(): Promise<Sub2Proxy[]> {
-  const result = await requestJson<{ items: Sub2Proxy[] }>("/api/sub2/proxies");
-  return result.items;
-}
-
-export async function pushSub2Data(
-  data: unknown,
-  groupId: number,
-  proxyId?: number | null,
-  options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
-): Promise<Sub2PushResult> {
-  const started = await requestJson<Sub2PushJobStatus>("/api/sub2/push-data/jobs", {
+export async function loginDuckOpenAiAccount(duckAddressId: number): Promise<{ success: boolean; email: string; hasAuthJson: boolean }> {
+  return requestJson(`/api/duck/addresses/${duckAddressId}/openai-login`, {
     method: "POST",
-    body: JSON.stringify({ data, groupId, proxyId })
+    body: JSON.stringify({})
   });
-  await options?.onPoll?.(started);
-  return waitForSub2PushJob(started.jobId, options);
-}
-
-export async function fetchSub2PushJob(jobId: string): Promise<Sub2PushJobStatus> {
-  return requestJson<Sub2PushJobStatus>(`/api/sub2/push-data/jobs/${encodeURIComponent(jobId)}`);
-}
-
-async function waitForSub2PushJob(
-  jobId: string,
-  options?: { onPoll?: (job: Sub2PushJobStatus) => void | Promise<void> }
-): Promise<Sub2PushResult> {
-  while (true) {
-    const job = await fetchSub2PushJob(jobId);
-    await options?.onPoll?.(job);
-    if (job.status === "succeeded" && job.result) return job.result;
-    if (job.status === "failed") throw new Error(job.error || "Sub2 推送失败");
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
-  }
-}
-
-export async function pushOpenAiDuckAddressToSub2(
-  duckAddressId: number,
-  groupId?: number | null,
-  options?: {
-    proxyId?: number | null;
-    onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void>;
-  }
-): Promise<Sub2PushResult & { email?: string }> {
-  const started = await requestJson<OpenAiDuckPushJobStatus>("/api/openai/duck-push-sub2", {
-    method: "POST",
-    body: JSON.stringify({ duckAddressId, groupId, proxyId: options?.proxyId })
-  });
-  await options?.onPoll?.(started);
-  return waitForOpenAiDuckPushJob(started.jobId, options);
-}
-
-export async function fetchOpenAiDuckPushJob(jobId: string): Promise<OpenAiDuckPushJobStatus> {
-  return requestJson<OpenAiDuckPushJobStatus>(`/api/openai/duck-push-sub2/jobs/${encodeURIComponent(jobId)}`);
-}
-
-async function waitForOpenAiDuckPushJob(
-  jobId: string,
-  options?: { onPoll?: (job: OpenAiDuckPushJobStatus) => void | Promise<void> }
-): Promise<Sub2PushResult & { email?: string }> {
-  while (true) {
-    const job = await fetchOpenAiDuckPushJob(jobId);
-    await options?.onPoll?.(job);
-    if (job.status === "succeeded" && job.result) return job.result;
-    if (job.status === "failed") throw new Error(job.error || "OpenAI Duck 推送失败");
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
-  }
 }
 
 export async function fetchDuckAddressOpenAiPassword(duckAddressId: number): Promise<string> {

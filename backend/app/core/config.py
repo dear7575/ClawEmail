@@ -34,11 +34,8 @@ class Settings(BaseSettings):
     claw_domain: str = "claw.163.com"
     system_proxy_url: str = ""
     system_request_timeout_ms: int = 10000
-    sub2_api_url: str = ""
-    sub2_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
-    sub2_proxy_template_json: str = ""
 
     @model_validator(mode="after")
     def apply_legacy_database_path(self):

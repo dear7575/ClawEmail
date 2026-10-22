@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from app.db.mail_repository import mail_repository
 from app.services.duck import (
     DuckAccountCreate,
     DuckAccountTokenUpdate,
@@ -11,6 +12,7 @@ from app.services.duck import (
     OpenAiCredentialsUpdate,
     duck_service,
 )
+from app.services.openai_auth import openai_auth_service
 
 router = APIRouter(tags=["duck"])
 logger = logging.getLogger(__name__)
@@ -84,6 +86,28 @@ def update_duck_address(address_id: int, body: DuckAddressUpdate) -> dict[str, A
     if not address:
         raise HTTPException(status_code=404, detail="Duck address not found")
     return address
+
+
+@router.post("/api/duck/addresses/{address_id}/openai-login")
+def login_duck_openai_account(address_id: int) -> dict[str, Any]:
+    """为已注册 OpenAI 账号执行 OAuth 登录并保存授权凭据。"""
+
+    address = duck_service.repository.get_address(address_id)
+    if not address or address.get("status") != "active":
+        raise HTTPException(status_code=404, detail="Duck address not found or inactive")
+
+    forwarding_email = str(address.get("forwarding_mailbox_email") or "").strip().lower()
+    if not forwarding_email:
+        raise HTTPException(status_code=400, detail="该 Duck 邮箱尚未绑定目标 Claw 邮箱")
+
+    mailbox = mail_repository.get_mailbox_by_email(forwarding_email)
+    if not mailbox or mailbox.get("status") == "deleted":
+        raise HTTPException(status_code=404, detail="Duck 邮箱绑定的目标 Claw 邮箱不存在或已删除")
+
+    openai_auth_service.mail_client.api_key(mailbox.get("connection_id"))
+    login = openai_auth_service.login_with_email_otp(address, address["address"], mailbox)
+    logger.info("已保存 OpenAI OAuth 登录凭据：duckAddressId=%s", address_id)
+    return {"success": True, "email": login.token.get("email") or address["address"], "hasAuthJson": True}
 
 
 @router.delete("/api/duck/addresses/{address_id}")

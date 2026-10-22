@@ -39,6 +39,7 @@ HTML_CODE_BLOCK_PATTERN = re.compile(r"<p\b[^>]*font-size:\s*24px[^>]*>\s*(\d{6}
 STANDALONE_CODE_PATTERN = re.compile(r"(?:^|[\s>])(\d{6})(?:[\s<]|$)")
 OPENAI_CODE_SUBJECT_PATTERN = re.compile(r"(openai|chatgpt|chat gpt|验证码|verification|code|login)", re.I)
 PHONE_REQUIREMENT_PATTERN = re.compile(r"add[-_ ]?phone|phone[_-]?verification|phone[_-]?number|phone_required|绑定手机号|手机", re.I)
+OTP_WAIT_TIMEOUT_MS = 60_000
 OTP_MAIL_TIME_GRACE_MS = 90_000
 OTP_MAIL_FALLBACK_ACCEPT_MS = 15 * 60_000
 OTP_MAIL_SCAN_LIMIT = 100
@@ -448,37 +449,6 @@ def cached_mail_to_openai_mail(mail: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def random_password(length: int = 18) -> str:
-    """生成 OpenAI 注册密码。"""
-
-    upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    lower = "abcdefghijklmnopqrstuvwxyz"
-    digits = "0123456789"
-    symbols = "!@#$%"
-    all_chars = upper + lower + digits + symbols
-    chars = [
-        random.choice(upper),
-        random.choice(lower),
-        random.choice(digits),
-        random.choice(symbols),
-    ]
-    while len(chars) < length:
-        chars.append(random.choice(all_chars))
-    random.shuffle(chars)
-    return "".join(chars)
-
-
-def random_profile() -> dict[str, str]:
-    """生成 OpenAI 账号资料。"""
-
-    first = ["James", "Robert", "John", "Michael", "David", "Mary", "Emma", "Olivia"]
-    last = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller"]
-    year = 1996 + random.randrange(11)
-    month = f"{1 + random.randrange(12):02d}"
-    day = f"{1 + random.randrange(28):02d}"
-    return {"name": f"{random.choice(first)} {random.choice(last)}", "birthdate": f"{year}-{month}-{day}"}
-
-
 def serialize_openai_auth_json(token: dict[str, Any]) -> str:
     """序列化要保存到 Duck 地址的 OpenAI OAuth JSON。"""
 
@@ -770,33 +740,6 @@ class OpenAiAuthService:
             raise RuntimeError(f"ChatGPT 代理检测失败：chatgpt.com 返回 HTTP {response.status_code}，请稍后重试或更换代理")
         log_progress(progress, "chatgpt_region_check_success", {"status": response.status_code})
 
-    def register_password(
-        self,
-        client: OpenAiAuthClient,
-        device_id: str,
-        email: str,
-        password: str,
-        duck_address_id: int,
-        progress: OpenAiAuthProgress | None = None,
-    ) -> None:
-        """为新 OpenAI 账号提交密码并保存到 Duck 地址。"""
-
-        log_progress(progress, "register_password_start")
-        response = client.request(f"{AUTH_BASE}/api/accounts/user/register", {
-            "method": "POST",
-            "body": {"username": email, "password": password},
-            "referer": f"{AUTH_BASE}/create-account/password",
-            "headers": {
-                "oai-device-id": device_id,
-                "openai-sentinel-token": self.build_sentinel_token(client, device_id, "username_password_create"),
-            },
-        })
-        body = json_or_none(response.text)
-        if response.status_code != 200:
-            raise RuntimeError(f"OpenAI 注册密码提交失败：{body_error(body, response.reason_phrase or f'HTTP {response.status_code}')}")
-        self.duck_repo.update_openai_credentials(duck_address_id, {"password": password})
-        log_progress(progress, "register_password_success", {"status": response.status_code})
-
     def verify_password(
         self,
         client: OpenAiAuthClient,
@@ -859,27 +802,6 @@ class OpenAiAuthService:
         if response.status_code not in {200, 302}:
             raise RuntimeError(f"OpenAI 发送验证码失败：{body_error(body, response.reason_phrase or f'HTTP {response.status_code}')}")
         log_progress(progress, "otp_send_success", {"status": response.status_code})
-
-    def create_account_profile(self, client: OpenAiAuthClient, device_id: str, progress: OpenAiAuthProgress | None = None) -> str:
-        """补充 OpenAI 新账号资料并返回下一跳 URL。"""
-
-        profile = random_profile()
-        log_progress(progress, "create_account_profile_start", {"birthdate": profile["birthdate"]})
-        response = client.request(f"{AUTH_BASE}/api/accounts/create_account", {
-            "method": "POST",
-            "body": profile,
-            "referer": f"{AUTH_BASE}/about-you",
-            "headers": {
-                "oai-device-id": device_id,
-                "openai-sentinel-token": self.build_sentinel_token(client, device_id, "oauth_create_account"),
-            },
-        })
-        body = json_or_none(response.text)
-        if response.status_code not in {200, 302}:
-            raise RuntimeError(f"OpenAI 创建账号资料失败：{body_error(body, response.reason_phrase or f'HTTP {response.status_code}')}")
-        next_url = continue_url(body)
-        log_progress(progress, "create_account_profile_success", {"status": response.status_code, "continueUrl": next_url})
-        return next_url
 
     def exchange_tokens(self, client: OpenAiAuthClient, code: str, code_verifier: str) -> dict[str, Any]:
         """用 OAuth callback code 换取 OpenAI token。"""
@@ -1247,7 +1169,7 @@ class OpenAiAuthService:
         return None
 
     def login_with_email_otp(self, duck_address: dict[str, Any], target_email: str, inbox_mailbox: dict[str, Any]) -> OpenAiLoginResult:
-        """使用 Duck 邮箱完成 OpenAI 自动登录或注册。"""
+        """使用 Duck 邮箱完成已注册 OpenAI 账号登录并获取 OAuth token。"""
 
         progress = OpenAiAuthProgress(
             operation_id=create_operation_id(),
@@ -1267,7 +1189,7 @@ class OpenAiAuthService:
             'audience': PLATFORM_AUDIENCE,
             'redirect_uri': PLATFORM_REDIRECT_URI,
             'device_id': device_id,
-            'screen_hint': 'login_or_signup',
+            'screen_hint': 'login',
             'max_age': '0',
             'login_hint': target_email,
             'scope': 'openid profile email offline_access',
@@ -1287,27 +1209,29 @@ class OpenAiAuthService:
         auth_page_type = page_type(authorize_body)
         log_progress(progress, "authorize_success", {"status": authorize.status_code, **summarize_auth_body(authorize_body)})
 
-        if auth_page_type == "create_account_password":
-            self.register_password(client, device_id, target_email, random_password(), duck_address["id"], progress)
-        elif auth_page_type == "login_password":
+        if auth_page_type in {"create_account_password", "signup", "create_account"}:
+            raise RuntimeError("该邮箱尚未注册 OpenAI 账号；此流程仅支持已注册账号登录")
+        if auth_page_type == "login_password":
             password = str(duck_address.get("openai_password") or "").strip()
             if not password:
-                raise RuntimeError("该 Duck 邮箱已注册 OpenAI 账号，但本地没有保存密码；请换一个新的 Duck 邮箱重新推送，或手动找回密码后再处理")
+                raise RuntimeError("该 Duck 邮箱已关联 OpenAI 登录，但本地没有保存密码；请先补充密码或使用 OpenAI 官方流程处理")
             password_result = self.verify_password(client, device_id, target_email, password, progress)
             next_url = password_result.next_url
             if requires_account_profile(password_result.page_type):
-                next_url = self.create_account_profile(client, device_id, progress)
-            elif password_result.requires_email_otp:
+                raise RuntimeError("该 OpenAI 账号尚未完成注册；此流程仅支持已注册账号登录")
+            if password_result.requires_email_otp:
                 validated = self.wait_and_validate_email_otp(
                     client,
                     device_id,
                     inbox_mailbox,
                     target_email,
                     password_result.otp_requested_at_ms or round(time.time() * 1000),
-                    network.open_ai_otp_timeout_ms,
+                    OTP_WAIT_TIMEOUT_MS,
                     progress,
                 )
-                next_url = self.create_account_profile(client, device_id, progress) if requires_account_profile(validated["pageType"]) else validated["nextUrl"] or next_url
+                if requires_account_profile(validated["pageType"]):
+                    raise RuntimeError("该 OpenAI 账号尚未完成注册；此流程仅支持已注册账号登录")
+                next_url = validated["nextUrl"] or next_url
             callback = self.extract_callback_params(client, next_url, device_id, progress)
             if not callback:
                 raise RuntimeError("OpenAI 密码登录成功后未拿到 OAuth callback code")
@@ -1338,11 +1262,13 @@ class OpenAiAuthService:
             inbox_mailbox,
             target_email,
             otp_requested_at_ms,
-            network.open_ai_otp_timeout_ms,
+            OTP_WAIT_TIMEOUT_MS,
             progress,
         )
-        next_url = self.create_account_profile(client, device_id, progress) if requires_account_profile(validated["pageType"]) else validated["nextUrl"]
-        callback = self.extract_callback_params(client, next_url or validated["nextUrl"], device_id, progress)
+        if requires_account_profile(validated["pageType"]):
+            raise RuntimeError("该邮箱尚未注册 OpenAI 账号；此流程仅支持已注册账号登录")
+        next_url = validated["nextUrl"]
+        callback = self.extract_callback_params(client, next_url, device_id, progress)
         if not callback:
             raise RuntimeError("OpenAI 登录成功后未拿到 OAuth callback code")
         log_progress(progress, "oauth_callback_success")
