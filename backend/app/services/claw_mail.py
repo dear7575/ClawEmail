@@ -18,6 +18,7 @@ CLAW_ORIGIN = "https://claw.163.com"
 TOKEN_URL = f"{CLAW_ORIGIN}/claw-api-gateway/open/v1/mail/auth/token"
 COREMAIL_BASE_URL = f"{CLAW_ORIGIN}/claw-api-gateway/api/coremail"
 TOKEN_REFRESH_SKEW_SECONDS = 60
+MAX_FULL_INBOX_SYNC_MESSAGES = 50_000
 FOLDER_IDS = {
     "INBOX": 1,
     "Inbox": 1,
@@ -254,24 +255,46 @@ class ClawMailClient:
     def list_inbox_messages(
         self,
         mailbox_email: str,
-        max_messages: int = 500,
+        max_messages: int | None = 500,
         connection_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """分页读取收件箱远端邮件摘要。
 
         参数:
             mailbox_email: Claw 邮箱地址。
-            max_messages: 最多读取的邮件数量。
+            max_messages: 最多读取的邮件数量；为 None 时读取完整收件箱。
             connection_id: Claw 连接 ID；为空时使用 legacy 连接。
 
         返回:
             Coremail 邮件摘要列表，按 Coremail 返回顺序排列。
         """
 
-        logger.info("开始同步收件箱摘要：mailbox=%s max=%s", mailbox_email, max_messages)
+        logger.info("开始同步收件箱摘要：mailbox=%s max=%s", mailbox_email, max_messages or "all")
         summaries: list[dict[str, Any]] = []
         page_size = 100
-        for start in range(0, max_messages, page_size):
+        start = 0
+        while max_messages is None or start < max_messages:
+            if max_messages is None and start >= MAX_FULL_INBOX_SYNC_MESSAGES:
+                messages = self.coremail_call(
+                    mailbox_email,
+                    "mbox:listMessages",
+                    {
+                        "fid": folder_id("INBOX"),
+                        "order": "date",
+                        "desc": True,
+                        "start": start,
+                        "limit": page_size,
+                    },
+                    connection_id,
+                )
+                if not isinstance(messages, list):
+                    raise RuntimeError(f"Claw 收件箱列表响应格式无效：mailbox={mailbox_email} start={start}")
+                if messages:
+                    raise RuntimeError(
+                        f"收件箱邮件超过完整同步安全上限：mailbox={mailbox_email} limit={MAX_FULL_INBOX_SYNC_MESSAGES}"
+                    )
+                break
+            limit = page_size if max_messages is None else min(page_size, max_messages - start)
             messages = self.coremail_call(
                 mailbox_email,
                 "mbox:listMessages",
@@ -280,29 +303,33 @@ class ClawMailClient:
                     "order": "date",
                     "desc": True,
                     "start": start,
-                    "limit": min(page_size, max_messages - start),
+                    "limit": limit,
                 },
                 connection_id,
-            ) or []
+            )
+            if not isinstance(messages, list):
+                raise RuntimeError(f"Claw 收件箱列表响应格式无效：mailbox={mailbox_email} start={start}")
             for message in messages:
-                if isinstance(message, dict) and message.get("id"):
-                    summaries.append(message)
-            if len(messages) < page_size:
+                if not isinstance(message, dict) or not message.get("id"):
+                    raise RuntimeError(f"Claw 收件箱列表包含无效邮件项：mailbox={mailbox_email} start={start}")
+                summaries.append(message)
+            if len(messages) < limit:
                 break
+            start += limit
         logger.info("收件箱摘要同步完成：mailbox=%s count=%s", mailbox_email, len(summaries))
         return summaries
 
     def list_inbox_message_ids(
         self,
         mailbox_email: str,
-        max_messages: int = 500,
+        max_messages: int | None = 500,
         connection_id: str | None = None,
     ) -> list[str]:
         """分页读取收件箱远端邮件 ID。
 
         参数:
             mailbox_email: Claw 邮箱地址。
-            max_messages: 最多读取的邮件数量。
+            max_messages: 最多读取的邮件数量；为 None 时读取完整收件箱。
             connection_id: Claw 连接 ID；为空时使用 legacy 连接。
 
         返回:

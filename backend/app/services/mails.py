@@ -115,12 +115,19 @@ class MailService:
         )
 
     def detail(self, mail_id: int, connection_id: str | None = None, mailbox_email: str | None = None) -> dict | None:
-        """读取邮件详情并标记已读（调用批量路径，避免重复标记）。"""
-        self.mark_read(connection_id=connection_id, mailbox_email=mailbox_email)
+        """读取单封邮件详情并仅将该邮件标记为已读。"""
 
         mail = self.repository.get_mail(mail_id)
         if not mail:
             return None
+        if not mail.get("read_at"):
+            mail = self.repository.mark_mail_read(mail_id) or mail
+            self._broadcast_mail_event(
+                "mark_read",
+                mail.get("connection_id"),
+                mail.get("mailbox_email"),
+                {"id": mail_id, "updated": 1},
+            )
         return {
             **mail,
             "parsed": parse_mail_raw_json(mail),
@@ -145,7 +152,7 @@ class MailService:
         logger.info("开始同步邮箱收件箱：connection=%s mailbox=%s", connection_id or "legacy", normalized_mailbox)
         remote_ids = self.mail_client.list_inbox_message_ids(
             normalized_mailbox,
-            max_messages=500,
+            max_messages=None,
             connection_id=connection_id,
         )
         remote_id_set = set(remote_ids)
@@ -273,27 +280,41 @@ class MailService:
         )
         errors: list[dict] = []
         deleted = 0
+        failed = 0
         for mail in mails:
             try:
                 self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
             except Exception as exc:
                 logger.warning(
-                    "远端删除邮件失败，继续删除本地缓存：mailId=%s mailbox=%s providerMailId=%s error=%s",
+                    "远端删除邮件失败，保留本地缓存：mailId=%s mailbox=%s providerMailId=%s error=%s",
                     mail["id"],
                     mail["mailbox_email"],
                     mail["provider_mail_id"],
                     exc,
                 )
+                failed += 1
+                errors.append({
+                    "id": mail["id"],
+                    "mailboxEmail": mail["mailbox_email"],
+                    "providerMailId": mail["provider_mail_id"],
+                    "error": str(exc),
+                })
+                continue
             if self.repository.delete_mail(mail["id"]):
                 deleted += 1
 
-        if deleted > 0:
-            self._broadcast_mail_event("clear_remote", connection_id, normalized_mailbox, {"deleted": deleted})
+        if deleted > 0 or failed > 0:
+            self._broadcast_mail_event(
+                "clear_remote",
+                connection_id,
+                normalized_mailbox,
+                {"deleted": deleted, "failed": failed},
+            )
 
         result = {
-            "success": True,
+            "success": failed == 0,
             "deleted": deleted,
-            "failed": 0,
+            "failed": failed,
             "errors": errors,
         }
         logger.info(

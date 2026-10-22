@@ -10,7 +10,7 @@ import {Dialog, DialogContent, DialogDescription, DialogTitle} from "./component
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "./components/ui/select";
 import {PrefsBar, usePrefs} from "./i18n";
 import {parseServerTime} from "./time";
-import {LogIn, LogOut, Menu, Pencil, Trash2, X} from "lucide-react";
+import {LogOut, Menu, Pencil, Trash2, X} from "lucide-react";
 import {
     type ClawAuthStatus,
     createDuckAccount,
@@ -25,7 +25,6 @@ import {
     type DuckAddress,
     fetchConnections,
     fetchDuckAccounts,
-    fetchDuckAddressOpenAiAuthJson,
     fetchDuckAddressOpenAiPassword,
     fetchDuckAddresses,
     fetchListeners,
@@ -37,7 +36,6 @@ import {
     fetchTelegramSettings,
     generateDuckAddress,
     getAdminPassword,
-    loginDuckOpenAiAccount,
     type ListenerSettings,
     type ListenerSnapshot,
     type Mailbox,
@@ -50,7 +48,7 @@ import {
     type TelegramSettings,
     updateDuckAccountToken,
     updateDuckAddress,
-    updateDuckAddressOpenAiCredentials,
+    updateDuckAddressOpenAiPassword,
     updateListenerSettings,
     updateSystemNetworkSettings,
     updateTelegramSettings,
@@ -254,12 +252,10 @@ export function App() {
     const [telegramMessage, setTelegramMessage] = useState("");
     const [telegramSendBusy, setTelegramSendBusy] = useState(false);
     const [openAiPasswordCopyBusyDuckAddressId, setOpenAiPasswordCopyBusyDuckAddressId] = useState<number | null>(null);
-    const [openAiLoginBusyDuckAddressId, setOpenAiLoginBusyDuckAddressId] = useState<number | null>(null);
     const [duckAddressEditorAddress, setDuckAddressEditorAddress] = useState<DuckAddress | null>(null);
     const [duckAddressEditorForwardingMailbox, setDuckAddressEditorForwardingMailbox] = useState("");
     const [duckAddressEditorNote, setDuckAddressEditorNote] = useState("");
     const [openAiCredentialPasswordInput, setOpenAiCredentialPasswordInput] = useState("");
-    const [openAiCredentialAuthJsonInput, setOpenAiCredentialAuthJsonInput] = useState("");
     const [duckAddressEditorBusy, setDuckAddressEditorBusy] = useState(false);
 
     const activeConnections = useMemo(
@@ -447,13 +443,17 @@ export function App() {
         if (selectedMail && !items.some((mail) => mail.id === selectedMail.id)) {
             setSelectedMail(null);
         }
+        return data.syncErrors ?? [];
     }
 
     async function handleRefreshMails() {
         if (mailRefreshBusy) return;
         setMailRefreshBusy(true);
         try {
-            await loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox));
+            const syncErrors = await loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox));
+            if (syncErrors.length > 0) {
+                showError(`邮件列表已更新，但 ${syncErrors.length} 个邮箱同步失败：${syncErrors[0].mailbox}`);
+            }
         } catch (err) {
             reportError(err);
         } finally {
@@ -939,23 +939,6 @@ export function App() {
         }
     }
 
-    async function handleLoginDuckOpenAiAccount(address: DuckAddress) {
-        if (!address.forwarding_mailbox_email) {
-            showError("该 Duck 邮箱没有绑定目标 Claw 邮箱，无法读取 OpenAI 验证码");
-            return;
-        }
-        setOpenAiLoginBusyDuckAddressId(address.id);
-        try {
-            const result = await loginDuckOpenAiAccount(address.id);
-            await loadDuckAddresses(selectedDuckAccountId);
-            showStatus(`OpenAI OAuth 登录成功 · ${result.email}`);
-        } catch (err) {
-            reportError(err);
-        } finally {
-            setOpenAiLoginBusyDuckAddressId(null);
-        }
-    }
-
     function handleCopyDuckAddress(address: DuckAddress) {
         navigator.clipboard.writeText(address.address).catch(reportError);
         showStatus("Duck 邮箱已复制");
@@ -966,19 +949,12 @@ export function App() {
         setDuckAddressEditorForwardingMailbox(address.forwarding_mailbox_email ?? "");
         setDuckAddressEditorNote(address.note ?? "");
         setOpenAiCredentialPasswordInput("");
-        setOpenAiCredentialAuthJsonInput("");
         setDuckAddressEditorBusy(true);
         try {
-            const [passwordValue, authJsonValue] = await Promise.all([
-                address.has_openai_password
-                    ? fetchDuckAddressOpenAiPassword(address.id).catch(() => "")
-                    : Promise.resolve(""),
-                address.has_openai_auth_json
-                    ? fetchDuckAddressOpenAiAuthJson(address.id).catch(() => "")
-                    : Promise.resolve("")
-            ]);
+            const passwordValue = address.has_openai_password
+                ? await fetchDuckAddressOpenAiPassword(address.id).catch(() => "")
+                : "";
             setOpenAiCredentialPasswordInput(passwordValue);
-            setOpenAiCredentialAuthJsonInput(authJsonValue);
         } catch (err) {
             reportError(err);
         } finally {
@@ -988,24 +964,14 @@ export function App() {
 
     async function handleSaveDuckAddressEditor() {
         if (!duckAddressEditorAddress) return;
-        const authJsonText = openAiCredentialAuthJsonInput.trim();
-        if (authJsonText) {
-            try {
-                JSON.parse(authJsonText);
-            } catch {
-                showError("OpenAI 授权信息必须是合法 JSON");
-                return;
-            }
-        }
         setDuckAddressEditorBusy(true);
         try {
             await updateDuckAddress(duckAddressEditorAddress.id, {
                 forwardingMailboxEmail: duckAddressEditorForwardingMailbox || null,
                 note: duckAddressEditorNote || null
             });
-            const row = await updateDuckAddressOpenAiCredentials(duckAddressEditorAddress.id, {
-                password: openAiCredentialPasswordInput || null,
-                authJson: authJsonText || null
+            const row = await updateDuckAddressOpenAiPassword(duckAddressEditorAddress.id, {
+                password: openAiCredentialPasswordInput || null
             });
             setDuckAddresses((items) => items.map((item) => item.id === row.id ? row : item));
             setDuckAddressEditorAddress(null);
@@ -1446,7 +1412,10 @@ export function App() {
                                 <button onClick={() => setView("mailboxes")}>管理邮箱</button>
                                 <button onClick={() => setView("inbox")}>查看邮件</button>
                                 <button
-                                    onClick={() => loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox)).catch(reportError)}>刷新统计
+                                    disabled={mailRefreshBusy}
+                                    onClick={handleRefreshMails}
+                                >
+                                    {mailRefreshBusy ? "刷新中..." : "刷新统计"}
                                 </button>
                             </div>
                         </div>
@@ -1669,7 +1638,6 @@ export function App() {
                                         <span>Duck 邮箱</span>
                                         <span>目标邮箱</span>
                                         <span>OpenAI 密码</span>
-                                        <span>授权状态</span>
                                         <span>备注</span>
                                         <span>创建于</span>
                                         <span>操作</span>
@@ -1709,26 +1677,9 @@ export function App() {
                                                     <span className="mono muted">—</span>
                                                 )}
                                             </div>
-                                            <span
-                                                className={`dot auth-status-dot ${item.has_openai_auth_json ? "live" : ""}`}
-                                                data-label="授权状态"
-                                                title={item.has_openai_auth_json ? "授权已保存" : "未授权"}
-                                                aria-label={item.has_openai_auth_json ? "授权已保存" : "未授权"}
-                                            />
                                             <span className="time-cell" data-label="备注">{item.note ?? "—"}</span>
                                             <span className="time-cell" data-label="创建于">{formatServerTime(item.created_at)}</span>
                                             <div className="ops" data-label="操作">
-                                                <button
-                                                    className="icon-btn"
-                                                    onClick={() => handleLoginDuckOpenAiAccount(item)}
-                                                    disabled={item.status !== "active" || !item.forwarding_mailbox_email || openAiLoginBusyDuckAddressId === item.id}
-                                                    title={!item.forwarding_mailbox_email ? "需要先绑定目标 Claw 邮箱" : "登录已注册 OpenAI 账号并保存 OAuth"}
-                                                    aria-label="OpenAI OAuth 登录"
-                                                >
-                                                    {openAiLoginBusyDuckAddressId === item.id
-                                                        ? "..."
-                                                        : <LogIn size={14} aria-hidden="true"/>}
-                                                </button>
                                                 <button
                                                     className="icon-btn"
                                                     onClick={() => handleOpenDuckAddressEditor(item)}
@@ -2213,7 +2164,7 @@ export function App() {
                         <div className="confirm-copy">
                             <DialogTitle>编辑 Duck 邮箱记录</DialogTitle>
                             <DialogDescription>
-                                目标邮箱、备注和 OpenAI 凭据会一起保存。密码用于已注册账号再次登录，授权信息为登录成功后获取的 OAuth JSON。
+                                目标邮箱、备注和 OpenAI 密码会一起保存。
                             </DialogDescription>
                         </div>
                         <div className="confirm-mail">
@@ -2259,16 +2210,6 @@ export function App() {
                                     disabled={duckAddressEditorBusy}
                                     autoFocus
                                     spellCheck={false}
-                                />
-                            </label>
-                            <label>
-                                <span>授权信息 JSON</span>
-                                <textarea
-                                    value={openAiCredentialAuthJsonInput}
-                                    onChange={(event) => setOpenAiCredentialAuthJsonInput(event.target.value)}
-                                    disabled={duckAddressEditorBusy}
-                                    spellCheck={false}
-                                    placeholder="{ }"
                                 />
                             </label>
                         </div>

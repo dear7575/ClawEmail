@@ -33,7 +33,6 @@ def ensure_duck_tables(engine: Engine) -> None:
               forwarding_mailbox_email TEXT,
               note TEXT,
               openai_password TEXT,
-              openai_auth_json TEXT,
               sub2_pushed_at TEXT,
               sub2_push_mode TEXT,
               sub2_push_email TEXT,
@@ -47,7 +46,7 @@ def ensure_duck_tables(engine: Engine) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_duck_addresses_account_id ON duck_addresses(account_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_duck_addresses_status ON duck_addresses(status)"))
         ensure_column(connection, "duck_addresses", "openai_password", "TEXT")
-        ensure_column(connection, "duck_addresses", "openai_auth_json", "TEXT")
+        drop_column(connection, "duck_addresses", "openai_auth_json")
         ensure_column(connection, "duck_addresses", "sub2_pushed_at", "TEXT")
         ensure_column(connection, "duck_addresses", "sub2_push_mode", "TEXT")
         ensure_column(connection, "duck_addresses", "sub2_push_email", "TEXT")
@@ -60,6 +59,15 @@ def ensure_column(connection, table: str, column: str, definition: str) -> None:
     if any(row["name"] == column for row in rows):
         return
     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+
+
+def drop_column(connection, table: str, column: str) -> None:
+    """永久移除已废弃的 SQLite 数据列及其内容。"""
+
+    rows = connection.execute(text(f"PRAGMA table_info({table})")).mappings().all()
+    if not any(row["name"] == column for row in rows):
+        return
+    connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
 
 
 class DuckRepository:
@@ -209,9 +217,9 @@ class DuckRepository:
         with self.engine.begin() as connection:
             connection.execute(text("""
                 INSERT INTO duck_addresses
-                  (account_id, address, local_part, forwarding_mailbox_email, note, openai_password, openai_auth_json, status, raw_json)
+                  (account_id, address, local_part, forwarding_mailbox_email, note, openai_password, status, raw_json)
                 VALUES
-                  (:account_id, :address, :local_part, :forwarding_mailbox_email, :note, NULL, NULL, 'active', :raw_json)
+                  (:account_id, :address, :local_part, :forwarding_mailbox_email, :note, NULL, 'active', :raw_json)
                 ON CONFLICT(address) DO UPDATE SET
                   account_id = excluded.account_id,
                   local_part = excluded.local_part,
@@ -245,8 +253,8 @@ class DuckRepository:
             })
         return self.get_address(address_id)
 
-    def update_openai_credentials(self, address_id: int, input_value: dict[str, Any]) -> dict[str, Any] | None:
-        """更新 Duck 地址绑定的 OpenAI 密码或 OAuth JSON。"""
+    def update_openai_password(self, address_id: int, password: str | None) -> dict[str, Any] | None:
+        """更新 Duck 地址绑定的 OpenAI 密码。"""
 
         existing = self.get_address(address_id)
         if not existing:
@@ -255,13 +263,11 @@ class DuckRepository:
             connection.execute(text("""
                 UPDATE duck_addresses
                 SET openai_password = :openai_password,
-                    openai_auth_json = :openai_auth_json,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = :id
             """), {
                 "id": address_id,
-                "openai_password": input_value.get("password", existing["openai_password"]),
-                "openai_auth_json": input_value.get("auth_json", existing["openai_auth_json"]),
+                "openai_password": password,
             })
         return self.get_address(address_id)
 

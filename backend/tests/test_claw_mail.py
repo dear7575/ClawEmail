@@ -99,7 +99,33 @@ def test_claw_mail_lists_inbox_message_ids_via_coremail_proxy(tmp_path, monkeypa
     assert calls[1]["kwargs"]["json"]["fid"] == 1
 
 
-def test_claw_mail_send_uses_compose_continue_then_deliver(tmp_path, monkeypatch) -> None:
+def test_claw_mail_lists_complete_inbox_beyond_500_messages(tmp_path, monkeypatch) -> None:
+    pages = [
+        ok_response([{"id": f"m{index}"} for index in range(start, start + 100)])
+        for start in range(0, 600, 100)
+    ] + [ok_response([])]
+    client, calls = reset_claw_mail_client(tmp_path, monkeypatch, [token_response(), *pages])
+
+    ids = client.list_inbox_message_ids("demo@claw.163.com", max_messages=None)
+
+    assert len(ids) == 600
+    assert ids[0] == "m0"
+    assert ids[-1] == "m599"
+    assert [call["kwargs"]["json"]["start"] for call in calls[1:]] == list(range(0, 700, 100))
+
+
+def test_claw_mail_rejects_invalid_inbox_page_during_full_sync(tmp_path, monkeypatch) -> None:
+    client, _calls = reset_claw_mail_client(tmp_path, monkeypatch, [
+        token_response(),
+        ok_response(None),
+    ])
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="响应格式无效"):
+        client.list_inbox_message_ids("demo@claw.163.com", max_messages=None)
+
+
     client, calls = reset_claw_mail_client(tmp_path, monkeypatch, [
         token_response(),
         ok_response("compose-1"),

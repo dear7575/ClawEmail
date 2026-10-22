@@ -140,7 +140,6 @@ PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保
 DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
 GET    /api/duck/addresses?accountId=
 POST   /api/duck/accounts/:id/addresses # { forwardingMailboxEmail?, note? }
-POST   /api/duck/addresses/:id/openai-login # 登录已注册账号并保存 OAuth JSON
 PATCH  /api/duck/addresses/:id          # { forwardingMailboxEmail?, note? }
 DELETE /api/duck/addresses/:id          # 删除本地生成记录，不调用 DuckDuckGo 远端
 
@@ -209,10 +208,6 @@ Authorization: Bearer <DDG_TOKEN>
 ```
 
 本项目会规范化保存为 `example-private-address@duck.com`。Duck Token 属于敏感凭据，只保存在后端数据库中，前端只显示前后缀掩码。当前版本只支持**生成与本地记录**，不承诺远端停用、变更转发目标或读取 Duck 收件箱；Duck 邮箱没有独立收件箱，邮件会转发到你在 DuckDuckGo 里配置的真实邮箱。
-
-## 5.2 OpenAI OAuth 登录
-
-Duck 地址记录可保存已注册 OpenAI 账号的密码及 OAuth JSON，供独立登录和本地管理使用。自动登录仅支持已注册账号，不包含账号注册流程；登录凭据仅保存在后端，不向界面返回令牌。
 
 ## 6. 监听器与重连
 
@@ -350,12 +345,10 @@ DATABASE_PATH=./data/app.db
 - `DELETE /api/duck/accounts/:id`
 - `GET /api/duck/addresses`
 - `POST /api/duck/accounts/:id/addresses`
-- `POST /api/duck/addresses/:id/openai-login`
 - `PATCH /api/duck/addresses/:id`
 - `DELETE /api/duck/addresses/:id`
 - `GET /api/duck/addresses/:id/openai-password`
-- `GET /api/duck/addresses/:id/openai-auth-json`
-- `PATCH /api/duck/addresses/:id/openai-credentials`
+- `PATCH /api/duck/addresses/:id/openai-password`
 - `GET /api/telegram/settings`
 - `PUT /api/telegram/settings`
 - `POST /api/telegram/send`

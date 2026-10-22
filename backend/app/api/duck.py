@@ -3,16 +3,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.db.mail_repository import mail_repository
 from app.services.duck import (
     DuckAccountCreate,
     DuckAccountTokenUpdate,
     DuckAddressCreate,
     DuckAddressUpdate,
-    OpenAiCredentialsUpdate,
+    OpenAiPasswordUpdate,
     duck_service,
 )
-from app.services.openai_auth import openai_auth_service
 
 router = APIRouter(tags=["duck"])
 logger = logging.getLogger(__name__)
@@ -88,28 +86,6 @@ def update_duck_address(address_id: int, body: DuckAddressUpdate) -> dict[str, A
     return address
 
 
-@router.post("/api/duck/addresses/{address_id}/openai-login")
-def login_duck_openai_account(address_id: int) -> dict[str, Any]:
-    """为已注册 OpenAI 账号执行 OAuth 登录并保存授权凭据。"""
-
-    address = duck_service.repository.get_address(address_id)
-    if not address or address.get("status") != "active":
-        raise HTTPException(status_code=404, detail="Duck address not found or inactive")
-
-    forwarding_email = str(address.get("forwarding_mailbox_email") or "").strip().lower()
-    if not forwarding_email:
-        raise HTTPException(status_code=400, detail="该 Duck 邮箱尚未绑定目标 Claw 邮箱")
-
-    mailbox = mail_repository.get_mailbox_by_email(forwarding_email)
-    if not mailbox or mailbox.get("status") == "deleted":
-        raise HTTPException(status_code=404, detail="Duck 邮箱绑定的目标 Claw 邮箱不存在或已删除")
-
-    openai_auth_service.mail_client.api_key(mailbox.get("connection_id"))
-    login = openai_auth_service.login_with_email_otp(address, address["address"], mailbox)
-    logger.info("已保存 OpenAI OAuth 登录凭据：duckAddressId=%s", address_id)
-    return {"success": True, "email": login.token.get("email") or address["address"], "hasAuthJson": True}
-
-
 @router.delete("/api/duck/addresses/{address_id}")
 def delete_duck_address(address_id: int) -> dict[str, bool]:
     """删除 Duck 私有地址。"""
@@ -130,22 +106,12 @@ def get_duck_openai_password(address_id: int) -> dict[str, str]:
     return {"password": password}
 
 
-@router.get("/api/duck/addresses/{address_id}/openai-auth-json")
-def get_duck_openai_auth_json(address_id: int) -> dict[str, str]:
-    """读取 Duck 地址保存的 OpenAI OAuth JSON。"""
+@router.patch("/api/duck/addresses/{address_id}/openai-password")
+def update_duck_openai_password(address_id: int, body: OpenAiPasswordUpdate) -> dict[str, Any]:
+    """更新 Duck 地址绑定的 OpenAI 密码。"""
 
-    auth_json = duck_service.get_openai_auth_json(address_id)
-    if not auth_json:
-        raise HTTPException(status_code=404, detail="该 Duck 邮箱没有保存 OpenAI 授权信息")
-    return {"authJson": auth_json}
-
-
-@router.patch("/api/duck/addresses/{address_id}/openai-credentials")
-def update_duck_openai_credentials(address_id: int, body: OpenAiCredentialsUpdate) -> dict[str, Any]:
-    """更新 Duck 地址绑定的 OpenAI 凭据。"""
-
-    logger.info("API 更新 Duck 地址 OpenAI 凭据：addressId=%s", address_id)
-    address = duck_service.update_openai_credentials(address_id, body)
+    logger.info("API 更新 Duck 地址 OpenAI 密码：addressId=%s", address_id)
+    address = duck_service.update_openai_password(address_id, body)
     if not address:
         raise HTTPException(status_code=404, detail="Duck address not found")
     return address

@@ -73,6 +73,23 @@ class FailingSyncMailClient:
         raise httpx.ConnectError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol")
 
 
+class CompleteSnapshotSyncMailClient:
+    repository = FakeConnectionRepository()
+
+    def __init__(self, ids: list[str]) -> None:
+        self.ids = ids
+        self.requested_limit = 500
+
+    def list_inbox_message_ids(
+        self,
+        mailbox_email: str,
+        max_messages: int | None = 500,
+        connection_id: str | None = None,
+    ) -> list[str]:
+        self.requested_limit = max_messages
+        return self.ids
+
+
 def reset_mail_services(tmp_path, monkeypatch):
     database_url = f"sqlite:///{tmp_path / 'mail.db'}"
     monkeypatch.setenv("DATABASE_URL", database_url)
@@ -204,7 +221,28 @@ def test_mail_list_detail_and_remote_delete(tmp_path, monkeypatch, test_client) 
     assert fake_mail_client.deleted_mails == [("demo@claw.163.com", "remote-1", "legacy")]
 
 
-def test_mail_list_supports_pagination_and_keyword(tmp_path, monkeypatch, test_client) -> None:
+def test_mail_detail_marks_only_the_selected_mail_read(tmp_path, monkeypatch, test_client) -> None:
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    first = repository.save_mail({
+        "provider_mail_id": "remote-1",
+        "mailbox_email": "one@claw.163.com",
+        "subject": "selected unread",
+        "raw_json": "{}",
+    })
+    second = repository.save_mail({
+        "provider_mail_id": "remote-2",
+        "mailbox_email": "two@claw.163.com",
+        "subject": "other unread",
+        "raw_json": "{}",
+    })
+
+    response = test_client.get(f"/api/mails/{first['id']}")
+
+    assert response.status_code == 200
+    assert repository.get_mail(first["id"])["read_at"] is not None
+    assert repository.get_mail(second["id"])["read_at"] is None
+
+
     repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
     repository.save_mail({
         "provider_mail_id": "remote-1",
@@ -310,6 +348,28 @@ def test_mail_sync_network_error_returns_local_cache(tmp_path, monkeypatch, test
     assert health.status_code == 200
 
 
+def test_mail_sync_uses_complete_remote_snapshot_before_pruning_cache(tmp_path, monkeypatch, test_client) -> None:
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    import app.api.mails as mails_api_module
+
+    ids = [f"remote-{index}" for index in range(600)]
+    mail_client = CompleteSnapshotSyncMailClient(ids)
+    mails_api_module.mail_service.mail_client = mail_client
+    for provider_id in [*ids, "stale-cache"]:
+        repository.save_mail({
+            "connection_id": "conn-1",
+            "provider_mail_id": provider_id,
+            "mailbox_email": "demo@claw.163.com",
+            "raw_json": "{}",
+        })
+
+    mails_api_module.mail_service.sync_mailbox_inbox("conn-1", "demo@claw.163.com")
+
+    assert mail_client.requested_limit is None
+    assert repository.get_mail_by_provider_id("demo@claw.163.com", "remote-599", "conn-1") is not None
+    assert repository.get_mail_by_provider_id("demo@claw.163.com", "stale-cache", "conn-1") is None
+
+
 def test_clear_mails_deletes_filtered_remote_and_local_rows(tmp_path, monkeypatch, test_client) -> None:
     repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
     fake_mail_client = FakeMailClient()
@@ -336,7 +396,7 @@ def test_clear_mails_deletes_filtered_remote_and_local_rows(tmp_path, monkeypatc
     assert fake_mail_client.deleted_mails == [("one@claw.163.com", "remote-1", "legacy")]
 
 
-def test_clear_mails_keeps_local_delete_when_remote_connection_missing(tmp_path, monkeypatch, test_client) -> None:
+def test_clear_mails_preserves_local_rows_when_remote_connection_missing(tmp_path, monkeypatch, test_client) -> None:
     repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
     fake_mail_client = FakeMailClient()
     fake_mail_client.delete_error = ValueError("CLAW_API_KEY is required for mail operations; connect Claw first")
@@ -353,9 +413,13 @@ def test_clear_mails_keeps_local_delete_when_remote_connection_missing(tmp_path,
 
     response = client.delete("/api/mails?mailbox=gone@claw.163.com")
 
-    assert response.status_code == 200
-    assert response.json() == {"success": True, "deleted": 1, "failed": 0, "errors": []}
-    assert client.get("/api/mails").json()["count"] == 0
+    assert response.status_code == 207
+    assert response.json()["success"] is False
+    assert response.json()["deleted"] == 0
+    assert response.json()["failed"] == 1
+    assert response.json()["errors"][0]["id"] == 1
+    assert "CLAW_API_KEY" in response.json()["errors"][0]["error"]
+    assert client.get("/api/mails").json()["count"] == 1
 
 
 def test_create_mailbox_registers_listener_snapshot(tmp_path, monkeypatch, test_client) -> None:

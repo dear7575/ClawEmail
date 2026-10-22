@@ -96,13 +96,10 @@ class DuckAddressUpdate(BaseModel):
         return value.strip() if value is not None else None
 
 
-class OpenAiCredentialsUpdate(BaseModel):
-    """保存到 Duck 地址上的 OpenAI 凭据更新请求。"""
+class OpenAiPasswordUpdate(BaseModel):
+    """保存到 Duck 地址上的 OpenAI 密码更新请求。"""
 
     password: str | None = None
-    auth_json: Any = Field(default=None, alias="authJson")
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 def normalize_duck_token(value: str) -> str:
@@ -198,26 +195,7 @@ def public_duck_address(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "has_openai_password": bool(row.get("openai_password")),
-        "has_openai_auth_json": bool(row.get("openai_auth_json")),
     }
-
-
-def normalize_optional_json(value: Any) -> str | None | object:
-    """归一化可选 JSON 字段，支持清空、字符串 JSON 和对象。"""
-
-    if value is _UNSET:
-        return _UNSET
-    if value is None:
-        return None
-    if isinstance(value, str):
-        trimmed = value.strip()
-        if not trimmed:
-            return None
-        return json.dumps(json.loads(trimmed), ensure_ascii=False, indent=2)
-    return json.dumps(value, ensure_ascii=False, indent=2)
-
-
-_UNSET = object()
 
 
 class DuckService:
@@ -316,41 +294,14 @@ class DuckService:
             return None
         return row.get("openai_password") or None
 
-    def get_openai_auth_json(self, address_id: int) -> str | None:
-        """读取指定 Duck 地址保存的 OpenAI OAuth JSON。"""
+    def update_openai_password(self, address_id: int, body: OpenAiPasswordUpdate) -> dict[str, Any] | None:
+        """更新 Duck 地址绑定的 OpenAI 密码。"""
 
-        row = self.repository.get_address(address_id)
-        if not row or row["status"] != "active":
-            return None
-        return row.get("openai_auth_json") or None
-
-    def update_openai_credentials(self, address_id: int, body: OpenAiCredentialsUpdate) -> dict[str, Any] | None:
-        """更新 Duck 地址绑定的 OpenAI 密码或 OAuth JSON。
-
-        参数:
-            address_id: Duck 地址本地 ID。
-            body: 可选密码和 OAuth JSON。
-
-        返回:
-            更新后的公开地址信息；地址不存在时返回 None。
-        """
-
-        password = _UNSET if "password" not in body.model_fields_set else body.password or None
-        try:
-            auth_json = _UNSET if "auth_json" not in body.model_fields_set else normalize_optional_json(body.auth_json)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("OpenAI 授权信息必须是合法 JSON") from exc
-        payload: dict[str, Any] = {}
-        if password is not _UNSET:
-            payload["password"] = password
-        if auth_json is not _UNSET:
-            payload["auth_json"] = auth_json
-        row = self.repository.update_openai_credentials(address_id, payload)
+        row = self.repository.update_openai_password(address_id, body.password or None)
         logger.info(
-            "更新 Duck 地址 OpenAI 凭据：addressId=%s hasPassword=%s hasAuthJson=%s found=%s",
+            "更新 Duck 地址 OpenAI 密码：addressId=%s hasPassword=%s found=%s",
             address_id,
-            password is not _UNSET,
-            auth_json is not _UNSET,
+            bool(body.password),
             bool(row),
         )
         return public_duck_address(row) if row else None

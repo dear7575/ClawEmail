@@ -2242,8 +2242,8 @@ a:hover {
 
 .duck-row {
     display: grid;
-    grid-template-columns: minmax(250px, 1.3fr) minmax(190px, 0.9fr) minmax(120px, 0.55fr) 76px minmax(110px, 0.62fr) 148px 130px;
-    min-width: 1180px;
+    grid-template-columns: minmax(250px, 1.3fr) minmax(190px, 0.9fr) minmax(120px, 0.55fr) minmax(110px, 0.62fr) 148px 130px;
+    min-width: 1080px;
     gap: 14px;
     align-items: center;
     border-bottom: 1px solid var(--border-soft);
@@ -2407,12 +2407,6 @@ a:hover {
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.auth-status-dot {
-    width: 8px;
-    height: 8px;
-    justify-self: start;
 }
 
 .password-copy-button {
@@ -3821,7 +3815,7 @@ a:hover {
         overflow: hidden;
     }
 
-    .duck-row > :not(.ops):not(.auth-status-dot) {
+    .duck-row > :not(.ops) {
         min-width: 0;
         display: grid;
         grid-template-columns: 82px minmax(0, 1fr);
@@ -3831,9 +3825,8 @@ a:hover {
         padding: 10px 12px;
     }
 
-    .duck-row > :not(.ops):not(.auth-status-dot)::before,
-    .duck-row > .ops::before,
-    .duck-row > .auth-status-dot::before {
+    .duck-row > :not(.ops)::before,
+    .duck-row > .ops::before {
         content: attr(data-label);
         color: var(--muted-foreground);
         font-size: 11px;
@@ -3852,34 +3845,6 @@ a:hover {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-    }
-
-    .duck-row .auth-status-dot {
-        width: auto;
-        height: auto;
-        display: grid;
-        grid-template-columns: 82px minmax(0, 1fr);
-        align-items: center;
-        gap: 10px;
-        border-bottom: 1px solid var(--border-soft);
-        border-radius: 0;
-        background: transparent;
-        box-shadow: none;
-        animation: none;
-        padding: 10px 12px;
-    }
-
-    .duck-row .auth-status-dot::after {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: var(--text-4);
-    }
-
-    .duck-row .auth-status-dot.live::after {
-        background: var(--success);
-        box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 16%, transparent);
     }
 
     .duck-row > .ops {

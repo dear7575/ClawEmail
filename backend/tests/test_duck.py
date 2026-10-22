@@ -168,7 +168,7 @@ def test_list_duck_addresses_supports_pagination_and_keyword(tmp_path, monkeypat
     assert searched.json()["items"][0]["address"] == "first@duck.com"
 
 
-def test_update_duck_address_and_openai_credentials(tmp_path, monkeypatch, test_client) -> None:
+def test_update_duck_address_and_openai_password(tmp_path, monkeypatch, test_client) -> None:
     responses = [httpx.Response(200, json={"address": "private"})]
     reset_duck_service(tmp_path, monkeypatch, responses)
     client = test_client
@@ -179,11 +179,11 @@ def test_update_duck_address_and_openai_credentials(tmp_path, monkeypatch, test_
         "forwardingMailboxEmail": "",
         "note": "updated",
     })
-    credentials = client.patch(f"/api/duck/addresses/{created['id']}/openai-credentials", json={
+    credentials = client.patch(f"/api/duck/addresses/{created['id']}/openai-password", json={
         "password": "pw",
-        "authJson": {"accessToken": "token"},
     })
     password = client.get(f"/api/duck/addresses/{created['id']}/openai-password")
+    login = client.post(f"/api/duck/addresses/{created['id']}/openai-login")
     auth_json = client.get(f"/api/duck/addresses/{created['id']}/openai-auth-json")
 
     assert updated.status_code == 200
@@ -191,9 +191,10 @@ def test_update_duck_address_and_openai_credentials(tmp_path, monkeypatch, test_
     assert updated.json()["note"] == "updated"
     assert credentials.status_code == 200
     assert credentials.json()["has_openai_password"] is True
-    assert credentials.json()["has_openai_auth_json"] is True
+    assert "has_openai_auth_json" not in credentials.json()
     assert password.json() == {"password": "pw"}
-    assert auth_json.json() == {"authJson": '{\n  "accessToken": "token"\n}'}
+    assert login.status_code == 404
+    assert auth_json.status_code == 404
 
 
 def test_delete_duck_address(tmp_path, monkeypatch, test_client) -> None:
@@ -241,3 +242,71 @@ def test_repeated_duck_address_deletes_keep_listener_endpoint_available(tmp_path
     listed = client.get("/api/duck/addresses")
     assert listed.status_code == 200
     assert listed.json()["total"] == 0
+
+
+def test_fresh_duck_schema_omits_oauth_column(tmp_path, monkeypatch) -> None:
+    from sqlalchemy import text
+
+    repository, _calls = reset_duck_service(tmp_path, monkeypatch)
+    with repository.engine.connect() as connection:
+        columns = connection.execute(text("PRAGMA table_info(duck_addresses)")).mappings().all()
+
+    assert "openai_auth_json" not in {column["name"] for column in columns}
+
+
+def test_legacy_oauth_column_is_removed_without_losing_duck_data(tmp_path) -> None:
+    from sqlalchemy import create_engine, text
+
+    from app.db.duck_repository import DuckRepository
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-duck.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE duck_addresses (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              account_id TEXT NOT NULL,
+              address TEXT NOT NULL UNIQUE,
+              local_part TEXT NOT NULL,
+              forwarding_mailbox_email TEXT,
+              note TEXT,
+              openai_password TEXT,
+              openai_auth_json TEXT,
+              sub2_pushed_at TEXT,
+              sub2_push_mode TEXT,
+              sub2_push_email TEXT,
+              status TEXT NOT NULL DEFAULT 'active',
+              raw_json TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO duck_addresses (
+              account_id, address, local_part, forwarding_mailbox_email, note,
+              openai_password, openai_auth_json, sub2_pushed_at, sub2_push_mode,
+              sub2_push_email, raw_json
+            ) VALUES (
+              'legacy-account', 'legacy@duck.com', 'legacy', 'target@example.com', 'keep-note',
+              'keep-password', '{\"access_token\":\"legacy-token\"}', '2026-01-01', 'api',
+              'push@example.com', '{\"source\":\"legacy\"}'
+            )
+        """))
+
+    repository = DuckRepository(engine)
+    address = repository.get_address(1)
+    with engine.connect() as connection:
+        columns = connection.execute(text("PRAGMA table_info(duck_addresses)")).mappings().all()
+
+    assert address is not None
+    assert address["address"] == "legacy@duck.com"
+    assert address["forwarding_mailbox_email"] == "target@example.com"
+    assert address["note"] == "keep-note"
+    assert address["openai_password"] == "keep-password"
+    assert address["sub2_pushed_at"] == "2026-01-01"
+    assert address["sub2_push_mode"] == "api"
+    assert address["sub2_push_email"] == "push@example.com"
+    assert address["raw_json"] == '{"source":"legacy"}'
+    assert "openai_auth_json" not in {column["name"] for column in columns}
+
+    DuckRepository(engine)
+    engine.dispose()

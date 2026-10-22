@@ -99,7 +99,6 @@ export type DuckAddress = {
   status: string;
   raw_json: string;
   has_openai_password: boolean;
-  has_openai_auth_json: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -282,6 +281,16 @@ export async function updateMailboxCommunicationSettings(
   });
 }
 
+export type MailSyncError = {
+  connectionId: string | null;
+  mailbox: string;
+  error: string;
+};
+
+export type MailListResult = PagedResult<MailSummary> & {
+  syncErrors?: MailSyncError[];
+};
+
 export async function fetchMails(
   mailbox?: string,
   limit = 50,
@@ -289,7 +298,7 @@ export async function fetchMails(
   sync = false,
   connectionId?: string,
   keyword?: string
-): Promise<PagedResult<MailSummary>> {
+): Promise<MailListResult> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (mailbox) params.set("mailbox", mailbox);
   if (sync) params.set("sync", "true");
@@ -493,31 +502,16 @@ export async function sendTelegramNotification(text: string): Promise<void> {
   });
 }
 
-export async function loginDuckOpenAiAccount(duckAddressId: number): Promise<{ success: boolean; email: string; hasAuthJson: boolean }> {
-  return requestJson(`/api/duck/addresses/${duckAddressId}/openai-login`, {
-    method: "POST",
-    body: JSON.stringify({})
-  });
-}
-
 export async function fetchDuckAddressOpenAiPassword(duckAddressId: number): Promise<string> {
   const result = await requestJson<{ password: string }>(`/api/duck/addresses/${duckAddressId}/openai-password`);
   return result.password;
 }
 
-export async function fetchDuckAddressOpenAiAuthJson(duckAddressId: number): Promise<string> {
-  const result = await requestJson<{ authJson: string }>(`/api/duck/addresses/${duckAddressId}/openai-auth-json`);
-  return result.authJson;
-}
-
-export async function updateDuckAddressOpenAiCredentials(
+export async function updateDuckAddressOpenAiPassword(
   duckAddressId: number,
-  input: {
-    password?: string | null;
-    authJson?: string | null;
-  }
+  input: { password?: string | null }
 ): Promise<DuckAddress> {
-  return requestJson<DuckAddress>(`/api/duck/addresses/${duckAddressId}/openai-credentials`, {
+  return requestJson<DuckAddress>(`/api/duck/addresses/${duckAddressId}/openai-password`, {
     method: "PATCH",
     body: JSON.stringify(input)
   });
