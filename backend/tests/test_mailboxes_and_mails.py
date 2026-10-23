@@ -221,6 +221,53 @@ def test_mail_list_detail_and_remote_delete(tmp_path, monkeypatch, test_client) 
     assert fake_mail_client.deleted_mails == [("demo@claw.163.com", "remote-1", "legacy")]
 
 
+def test_mail_list_returns_bounded_preview_but_searches_full_body(tmp_path, monkeypatch, test_client) -> None:
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    full_text = "x" * 600 + "needle beyond preview"
+    full_html = "<p>" + ("large body " * 1000) + "</p>"
+    saved = repository.save_mail({
+        "provider_mail_id": "remote-large",
+        "mailbox_email": "demo@claw.163.com",
+        "subject": "large message",
+        "text": full_text,
+        "html": full_html,
+        "raw_json": json.dumps({"large": "x" * 1000}),
+    })
+
+    listed = test_client.get("/api/mails?keyword=needle")
+    detail = test_client.get(f"/api/mails/{saved['id']}")
+    item = listed.json()["items"][0]
+
+    assert listed.json()["total"] == 1
+    assert len(item["text"]) <= 512
+    assert item["html"] is None
+    assert "raw_json" not in item
+    assert detail.json()["text"] == full_text
+    assert detail.json()["html"] == full_html
+
+
+def test_mail_list_ordering_indexes_are_created(tmp_path, monkeypatch) -> None:
+    repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
+    from sqlalchemy import text
+    from app.db.mail_repository import MailRepository
+
+    with repository.engine.begin() as connection:
+        connection.execute(text("DROP INDEX IF EXISTS idx_mails_mailbox_created_id"))
+        connection.execute(text("DROP INDEX IF EXISTS idx_mails_connection_created_id"))
+        connection.execute(text("DROP INDEX IF EXISTS idx_mails_connection_mailbox_created_id"))
+
+    MailRepository(repository.engine)
+    with repository.engine.connect() as connection:
+        indexes = {
+            row["name"]
+            for row in connection.execute(text("PRAGMA index_list(mails)")).mappings().all()
+        }
+
+    assert "idx_mails_mailbox_created_id" in indexes
+    assert "idx_mails_connection_created_id" in indexes
+    assert "idx_mails_connection_mailbox_created_id" in indexes
+
+
 def test_mail_detail_marks_only_the_selected_mail_read(tmp_path, monkeypatch, test_client) -> None:
     repository, _mailbox_service = reset_mail_services(tmp_path, monkeypatch)
     first = repository.save_mail({

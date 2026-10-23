@@ -146,16 +146,6 @@ function containsKeyword(value: string | null | undefined, keyword: string): boo
     return Boolean(value?.toLowerCase().includes(keyword));
 }
 
-function mailMatchesKeyword(mail: MailSummary, keyword: string): boolean {
-    return [
-        mail.mailbox_email,
-        mail.source,
-        mail.address,
-        mail.subject,
-        mail.text
-    ].some((value) => containsKeyword(value, keyword));
-}
-
 function duckAddressMatchesKeyword(address: DuckAddress, keyword: string): boolean {
     return [
         address.address,
@@ -186,6 +176,7 @@ export function App() {
     const [mailPageSize, setMailPageSize] = useState<PageSizeOption>(DEFAULT_LIST_PAGE_SIZE);
     const [mailKeyword, setMailKeyword] = useState("");
     const [mailRefreshBusy, setMailRefreshBusy] = useState(false);
+    const mailRefreshInFlightRef = useRef(false);
     const [selectedMail, setSelectedMail] = useState<MailDetail | null>(null);
     const [duckAccounts, setDuckAccounts] = useState<DuckAccount[]>([]);
     const [duckAddresses, setDuckAddresses] = useState<DuckAddress[]>([]);
@@ -432,22 +423,17 @@ export function App() {
             connectionId ?? undefined,
             mailKeyword.trim() || undefined
         );
-        const normalizedKeyword = mailKeyword.trim().toLowerCase();
-        const hasUnmatchedMail = Boolean(normalizedKeyword)
-            && data.items.some((mail) => !mailMatchesKeyword(mail, normalizedKeyword));
-        const items = normalizedKeyword
-            ? data.items.filter((mail) => mailMatchesKeyword(mail, normalizedKeyword))
-            : data.items;
-        setMails(items);
-        setMailTotalCount(hasUnmatchedMail ? items.length : data.total ?? data.count ?? items.length);
-        if (selectedMail && !items.some((mail) => mail.id === selectedMail.id)) {
+        setMails(data.items);
+        setMailTotalCount(data.total ?? data.count ?? data.items.length);
+        if (selectedMail && !data.items.some((mail) => mail.id === selectedMail.id)) {
             setSelectedMail(null);
         }
         return data.syncErrors ?? [];
     }
 
     async function handleRefreshMails() {
-        if (mailRefreshBusy) return;
+        if (mailRefreshInFlightRef.current) return;
+        mailRefreshInFlightRef.current = true;
         setMailRefreshBusy(true);
         try {
             const syncErrors = await loadMails(selectedMailbox, true, mailConnectionFilter(selectedMailbox));
@@ -457,6 +443,7 @@ export function App() {
         } catch (err) {
             reportError(err);
         } finally {
+            mailRefreshInFlightRef.current = false;
             setMailRefreshBusy(false);
         }
     }

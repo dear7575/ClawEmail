@@ -60,6 +60,16 @@ def ensure_mail_tables(engine: Engine) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mails_created_at ON mails(created_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mails_connection_id ON mails(connection_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_mails_connection_mailbox ON mails(connection_id, mailbox_email)"))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mails_mailbox_created_id ON mails(mailbox_email, created_at DESC, id DESC)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mails_connection_created_id ON mails(connection_id, created_at DESC, id DESC)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mails_connection_mailbox_created_id "
+            "ON mails(connection_id, mailbox_email, created_at DESC, id DESC)"
+        ))
         connection.execute(text("""
             CREATE TABLE IF NOT EXISTS attachments (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -329,7 +339,10 @@ class MailRepository:
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         with self.engine.connect() as connection:
             items = [dict(row) for row in connection.execute(text(f"""
-                SELECT * FROM mails
+                SELECT
+                  id, connection_id, provider_mail_id, mailbox_email, source, address, subject,
+                  SUBSTR(text, 1, 512) AS text, NULL AS html, has_attachments, read_at, received_at, created_at
+                FROM mails
                 {where_sql}
                 ORDER BY created_at DESC, id DESC
                 LIMIT :limit OFFSET :offset

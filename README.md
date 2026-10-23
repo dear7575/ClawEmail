@@ -8,20 +8,21 @@
 ```text
 backend/
   app/                   FastAPI 后端（SQLite + Claw/Duck/Telegram 集成）
-    api/                 HTTP 路由，保持旧版 /api/* 响应结构兼容
+    api/                 HTTP 路由
     core/                配置、日志、数据库会话
-    repositories/        SQLite 数据访问层
+    db/                  SQLite 数据访问层
     services/            业务服务与外部接口封装
-    main.py              FastAPI 应用入口，可直接由 IDE 启动
+    main.py              FastAPI 应用入口
   requirements.txt       后端生产运行依赖
   requirements-dev.txt   后端开发与测试依赖
 frontend/
   app/                   Next.js App Router 前端
     App.tsx              主界面：登录、邮箱、邮件、Duck、通知、设置
-    api.ts               前端调用层（统一 X-Admin-Password / ?token=）
+    api.ts               前端调用层
     components/          收件箱、邮箱、弹窗等页面组件
   next.config.mjs        /api/* 转发到 FastAPI
 scripts/
+  dev.mjs                本地同时启动后端和前端
   docker-entrypoint.sh   Docker 单镜像启动脚本
 ```
 
@@ -33,9 +34,9 @@ scripts/
 | Claw 邮箱 | 创建（前缀 `^[a-z0-9]{1,32}$`）、列表、`?sync=true` 与远端做差量同步、删除（拒绝删主邮箱） | `backend/app/api/mailboxes.py`、`backend/app/services/claw_dashboard.py` |
 | 通讯规则 | 同步并保存 `commLevel` / `extReceiveType` / `extSendType`；邮箱页可配置个人 / 内部 / 外部通信范围 | `backend/app/api/mailboxes.py`、`frontend/app/components/CommunicationRulesDrawer.tsx` |
 | 实时收件 | 每个 `active` 邮箱一条监听状态；邮件入库为 `mails` + `attachments`；SSE `event: mail` 推送 | `backend/app/services/listeners.py`、`backend/app/services/sse.py` |
-| 收件同步 | `GET /api/mails?sync=true`：远端 INBOX `id` 列表 → 删本地多余、补本地缺失 | `backend/app/api/mails.py`、`backend/app/services/mails.py` |
-| 邮件详情 | 返回行 + 解析后的原始 JSON + 附件元数据 | `backend/app/api/mails.py` |
-| 删信 | 远端删除 + 本地行删除 | `backend/app/services/claw_mail.py`、`backend/app/api/mails.py` |
+| 收件同步 | `GET /api/mails?sync=true`：读取完整远端 INBOX 快照后对账；快照不完整时保留本地缓存 | `backend/app/services/mails.py`、`backend/app/services/claw_mail.py` |
+| 邮件详情 | 返回邮件内容、解析后的原始 JSON 与附件元数据；打开详情只将该邮件标记为已读 | `backend/app/api/mails.py` |
+| 删信 | 远端删除成功后再删除本地记录；失败项保留本地并返回错误 | `backend/app/services/mails.py`、`backend/app/api/mails.py` |
 | 发件 | 仅允许 `from` 是本地已管理邮箱 | `backend/app/api/send.py` |
 | 回信 | 基于本地 `mailId` 反查 `provider_mail_id` 调远端接口 | `backend/app/api/send.py` |
 | 附件下载 | 不缓存原始字节，按需流式拉取 | `backend/app/api/mails.py` |
@@ -105,47 +106,58 @@ X-Admin-Password: <ADMIN_PASSWORD>
 
 ```http
 GET    /health
+GET    /health/sync
+
 GET    /api/auth/claw/status
 POST   /api/auth/claw/send-code
 POST   /api/auth/claw/verify-code
 POST   /api/auth/claw/refresh
 POST   /api/auth/claw/logout
+GET    /api/connections
+GET    /api/connections/:id
+POST   /api/connections/send-code
+POST   /api/connections/verify-code
+POST   /api/connections/:id/refresh
+POST   /api/connections/:id/logout
+DELETE /api/connections/:id
 
-GET    /api/mailboxes                # 仅本地
-GET    /api/mailboxes?sync=true      # 与 Claw 做差量同步后再返回
+GET    /api/mailboxes                # ?sync=true 时与 Claw 同步
 POST   /api/mailboxes                # { suffix }
-POST   /api/mailboxes/:id/comm-settings      # { commLevel, extReceiveType?, extSendType? }
+POST   /api/mailboxes/:id/comm-settings
 DELETE /api/mailboxes/:id
 
-GET    /api/mails?mailbox=&limit=50&offset=0
-GET    /api/mails?sync=true&mailbox=...      # 远端 INBOX 全量比对
-GET    /api/mails/:id                        # 标记已读，返回详情 + 解析后 JSON + 附件元数据
-DELETE /api/mails/:id                        # 远端移到 Trash + 本地删除
-GET    /api/mails/:id/attachments/:partId    # 流式下载附件
+GET    /api/mails                    # 支持 mailbox、limit、offset、keyword、sync
+GET    /api/mails/:id                # 标记该邮件已读并返回详情
+GET    /api/mails/:id/attachments/:partId
+POST   /api/mails/mark-read
+DELETE /api/mails                    # 按筛选条件批量删除
+DELETE /api/mails/:id
+POST   /api/send
+POST   /api/reply
 
-POST   /api/send                              # { from, to[], cc?, bcc?, subject?, body?, html? }
-POST   /api/reply                             # { mailId, body?, html?, toAll? }
-
-GET    /api/events                            # SSE: event: mail
+GET    /api/events                   # SSE
 GET    /api/listeners
-GET    /api/listener-settings                 # { logMode, reconnectMode }
-PUT    /api/listener-settings                 # { logMode: quiet|lifecycle|verbose, reconnectMode: standard|slow }
+GET    /api/listener-settings
+PUT    /api/listener-settings
 
-GET    /api/system/network-settings           # { proxyUrl, timeoutMs }
-PUT    /api/system/network-settings           # { proxyUrl?, timeoutMs? }
-
+GET    /api/system/network-settings
+PUT    /api/system/network-settings
+GET    /api/duck/network-settings
+PUT    /api/duck/network-settings
 GET    /api/duck/accounts
-POST   /api/duck/accounts              # { label, token }，token 可填 "Bearer xxx" 或 "xxx"
-PATCH  /api/duck/accounts/:id          # { token }，替换已保存 Token，保留地址记录
-DELETE /api/duck/accounts/:id          # 本地删除 Token 及其生成记录，不调用 DuckDuckGo 远端
+POST   /api/duck/accounts
+PATCH  /api/duck/accounts/:id
+DELETE /api/duck/accounts/:id
 GET    /api/duck/addresses?accountId=
-POST   /api/duck/accounts/:id/addresses # { forwardingMailboxEmail?, note? }
-PATCH  /api/duck/addresses/:id          # { forwardingMailboxEmail?, note? }
-DELETE /api/duck/addresses/:id          # 删除本地生成记录，不调用 DuckDuckGo 远端
+POST   /api/duck/accounts/:id/addresses
+PATCH  /api/duck/addresses/:id
+DELETE /api/duck/addresses/:id
+GET    /api/duck/addresses/:id/openai-password
+PATCH  /api/duck/addresses/:id/openai-password
 
-GET    /api/telegram/settings            # { enabled, chatId, hasBotToken, botTokenPreview }
-PUT    /api/telegram/settings            # { enabled?, botToken?, chatId? }
-POST   /api/telegram/send                # { text }，手动发送文本到 Telegram
+GET    /api/telegram/settings
+PUT    /api/telegram/settings
+POST   /api/telegram/send
 ```
 
 请求样例：
@@ -297,77 +309,7 @@ DATABASE_PATH=./data/app.db
 
 如果容器无法直连 DuckDuckGo 或 Telegram，可以在 Web 的“系统设置”里填写系统代理地址。
 
-## 10. Python + Next.js 工作区
-
-当前仓库使用前后端分离结构：
-
-- `backend`：FastAPI 后端，提供 `/api/*`、`/health`、SQLite 数据访问和外部服务集成。
-- `frontend`：Next.js + Tailwind 前端，页面调用同源 `/api/*`，由 `app/api/[...path]` 服务端路由转发到后端；前端 `/health` 本地响应，用于容器前端健康检查。
-
-已迁移到 FastAPI 的兼容接口：
-
-- `GET /health`
-- `GET /api/auth/claw/status`
-- `GET /api/connections`
-- `GET /api/connections/:id`
-- `GET /api/listeners`
-- `GET /api/listener-settings`
-- `PUT /api/listener-settings`
-- `POST /api/auth/claw/send-code`
-- `POST /api/auth/claw/verify-code`
-- `POST /api/auth/claw/refresh`
-- `POST /api/auth/claw/logout`
-- `POST /api/connections/send-code`
-- `POST /api/connections/verify-code`
-- `POST /api/connections/:id/refresh`
-- `POST /api/connections/:id/logout`
-- `GET /api/mailboxes`
-- `GET /api/mailboxes?sync=true`
-- `POST /api/mailboxes`
-- `POST /api/mailboxes/:id/comm-settings`
-- `DELETE /api/mailboxes/:id`
-- `GET /api/mails`
-- `GET /api/mails?sync=true`
-- `GET /api/mails/:id`
-- `GET /api/mails/:id/attachments/:partId`
-- `DELETE /api/mails`
-- `DELETE /api/mails/:id`
-- `POST /api/send`
-- `POST /api/reply`
-- `GET /api/events`
-- `GET /api/system/network-settings`
-- `PUT /api/system/network-settings`
-- `GET /api/duck/network-settings`
-- `PUT /api/duck/network-settings`
-- `GET /api/duck/accounts`
-- `POST /api/duck/accounts`
-- `PATCH /api/duck/accounts/:id`
-- `DELETE /api/duck/accounts/:id`
-- `GET /api/duck/addresses`
-- `POST /api/duck/accounts/:id/addresses`
-- `PATCH /api/duck/addresses/:id`
-- `DELETE /api/duck/addresses/:id`
-- `GET /api/duck/addresses/:id/openai-password`
-- `PATCH /api/duck/addresses/:id/openai-password`
-- `GET /api/telegram/settings`
-- `PUT /api/telegram/settings`
-- `POST /api/telegram/send`
-
-后端启动：
-
-```bash
-cd backend
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-前端启动：
-
-```bash
-cd frontend
-npm run dev
-```
-
-更新版本：
+### 更新镜像
 
 ```bash
 git pull
