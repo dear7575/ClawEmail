@@ -241,6 +241,12 @@ class ListenerManager:
     async def _persist_mail_push(self, state: ListenerState, provider_mail_id: str) -> None:
         """读取新邮件详情、写入本地数据库并推送 SSE。"""
 
+        existing = await asyncio.to_thread(
+            self.mail_repository.get_mail_by_provider_id,
+            state.email,
+            provider_mail_id,
+            state.connection_id,
+        )
         mail = await asyncio.to_thread(
             self.mail_client.read_mail,
             state.email,
@@ -266,8 +272,9 @@ class ListenerManager:
                 "attachments": attachment_list(mail),
             },
         )
-        # 告警发送失败不影响 SSE 推送和监听器生命周期。
-        await asyncio.to_thread(self.alert_service.notify_openai_deactivation_if_needed, saved)
+        if not existing:
+            # 通知失败不影响邮件入库、SSE 推送和监听器生命周期。
+            await asyncio.to_thread(self.alert_service.notify_new_mail, saved)
         sse_hub.broadcast("mail", {
             "connectionId": state.connection_id,
             "mailboxEmail": state.email,

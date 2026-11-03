@@ -42,7 +42,7 @@ scripts/
 | 附件下载 | 不缓存原始字节，按需流式拉取 | `backend/app/api/mails.py` |
 | 监听器诊断 | `/api/listeners` 输出 `email/connected/retry`；前端有侧栏摘要 + 抽屉详情 | `backend/app/api/events.py`、`frontend/app/components/ListenersDrawer.tsx` |
 | Duck 邮箱 | 保存 DuckDuckGo Email Protection Bearer Token；调用非官方邮箱生成接口；记录已生成 `@duck.com` 邮箱、备注和预期转发目标 | `backend/app/api/duck.py`、`backend/app/services/duck.py`、`frontend/app/App.tsx` |
-| 消息通知 | 配置 Telegram Bot Token / Chat ID；在“消息通知”页面手动发送文本 | `backend/app/api/telegram.py`、`backend/app/services/telegram.py` |
+| 消息通知 | 配置 Telegram Bot Token / Chat ID；新邮件自动通知，并支持在“消息通知”页面手动发送文本 | `backend/app/api/telegram.py`、`backend/app/services/telegram.py`、`backend/app/services/mail_alerts.py` |
 | 前端体验 | 中英双语、暗亮主题、拖拽栏宽（侧边栏 / 邮件列表）、登录态 localStorage 记忆 | `frontend/app/i18n.tsx`、`frontend/app/hooks.ts` |
 
 ## 2. Claw 验证码登录链

@@ -1,7 +1,5 @@
 import importlib
 
-import httpx
-
 
 class FakeTelegramService:
     def __init__(self, error: Exception | None = None) -> None:
@@ -55,72 +53,51 @@ def reset_mail_alert_services(tmp_path, monkeypatch):
     return mail_repository_module.mail_repository, mail_alerts_module, mails_service_module
 
 
-def test_openai_deactivation_alert_scans_subject_text_header_and_raw_json(tmp_path, monkeypatch) -> None:
+def test_new_mail_notification_sends_for_any_mail_and_keeps_unread(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, _mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
     telegram = FakeTelegramService()
-    service = mail_alerts_module.MailAlertService(repository=repository, telegram_service_value=telegram)
+    service = mail_alerts_module.MailAlertService(telegram_service_value=telegram)
     mail = repository.save_mail({
         "provider_mail_id": "remote-1",
         "mailbox_email": "demo@claw.163.com",
-        "source": "noreply@openai.com",
-        "subject": "普通主题",
-        "text": "正文没有关键词",
-        "html": None,
-        "header_raw": "X-Reason: account_deactivated",
+        "source": "sender@example.com",
+        "subject": "普通邮件主题",
+        "text": "status=account_deactivated",
         "raw_json": "{}",
     })
 
-    result = service.notify_openai_deactivation_if_needed(mail)
+    result = service.notify_new_mail(mail)
     refreshed = repository.get_mail(mail["id"])
 
-    assert result == {"matched": True, "sent": True}
+    assert result == {"sent": True}
     assert len(telegram.messages) == 1
-    assert "OpenAI 账号停用告警" in telegram.messages[0]
+    assert "收到新邮件" in telegram.messages[0]
+    assert "普通邮件主题" in telegram.messages[0]
     assert "demo@claw.163.com" in telegram.messages[0]
-    assert refreshed["read_at"] is not None
+    assert refreshed["read_at"] is None
 
 
-def test_openai_deactivation_alert_matches_access_deactivated_subject(tmp_path, monkeypatch) -> None:
-    repository, mail_alerts_module, _mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
-    telegram = FakeTelegramService()
-    service = mail_alerts_module.MailAlertService(repository=repository, telegram_service_value=telegram)
-    mail = repository.save_mail({
-        "provider_mail_id": "remote-2",
-        "mailbox_email": "demo@claw.163.com",
-        "source": "noreply@openai.com",
-        "subject": "OpenAI API - Access Deactivated [test]",
-        "raw_json": "{}",
-    })
-
-    result = service.notify_openai_deactivation_if_needed(mail)
-
-    assert result == {"matched": True, "sent": True}
-    assert "OpenAI API - Access Deactivated [test]" in telegram.messages[0]
-
-
-def test_openai_deactivation_alert_failure_does_not_mark_read(tmp_path, monkeypatch) -> None:
+def test_new_mail_notification_failure_does_not_raise_or_mark_read(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, _mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
     service = mail_alerts_module.MailAlertService(
-        repository=repository,
         telegram_service_value=FakeTelegramService(RuntimeError("tg down")),
     )
     mail = repository.save_mail({
-        "provider_mail_id": "remote-3",
+        "provider_mail_id": "remote-2",
         "mailbox_email": "demo@claw.163.com",
-        "subject": "OpenAI API - Access Deactivated [test]",
+        "subject": "普通邮件",
         "raw_json": "{}",
     })
 
-    result = service.notify_openai_deactivation_if_needed(mail)
+    result = service.notify_new_mail(mail)
     refreshed = repository.get_mail(mail["id"])
 
-    assert result["matched"] is True
     assert result["sent"] is False
     assert "tg down" in result["error"]
     assert refreshed["read_at"] is None
 
 
-def test_sync_new_deactivation_mail_sends_alert_and_marks_read(tmp_path, monkeypatch) -> None:
+def test_sync_new_mail_sends_notification_and_broadcasts_event(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
     import app.services.sse as sse_module
 
@@ -128,20 +105,18 @@ def test_sync_new_deactivation_mail_sends_alert_and_marks_read(tmp_path, monkeyp
     events: list[tuple[str, dict]] = []
 
     def capture_event(event_type: str, payload: dict) -> None:
-        """捕获同步入库后的 SSE 广播。"""
-
         events.append((event_type, payload))
 
     monkeypatch.setattr(sse_module.sse_hub, "broadcast", capture_event)
-    alert_service = mail_alerts_module.MailAlertService(repository=repository, telegram_service_value=telegram)
+    alert_service = mail_alerts_module.MailAlertService(telegram_service_value=telegram)
     service = mails_service_module.MailService(
         repository=repository,
         mail_client=FakeSyncMailClient({
-            "id": "remote-4",
-            "from": ["noreply@openai.com"],
+            "id": "remote-3",
+            "from": ["sender@example.com"],
             "to": ["demo@claw.163.com"],
-            "subject": "普通主题",
-            "text": {"content": "status=account_deactivated"},
+            "subject": "普通邮件",
+            "text": {"content": "body"},
             "date": "2026-06-02T00:00:00",
         }),
         alert_service=alert_service,
@@ -156,30 +131,31 @@ def test_sync_new_deactivation_mail_sends_alert_and_marks_read(tmp_path, monkeyp
     })
 
     service.sync_mailbox_inbox("conn-1", "demo@claw.163.com")
-    saved = repository.get_mail_by_provider_id("demo@claw.163.com", "remote-4", "conn-1")
+    saved = repository.get_mail_by_provider_id("demo@claw.163.com", "remote-3", "conn-1")
 
     assert len(telegram.messages) == 1
-    assert saved["read_at"] is not None
+    assert "普通邮件" in telegram.messages[0]
+    assert saved["read_at"] is None
     assert events == [("mail", {
         "connectionId": "conn-1",
         "mailboxEmail": "demo@claw.163.com",
         "id": saved["id"],
-        "providerMailId": "remote-4",
+        "providerMailId": "remote-3",
     })]
 
 
-def test_sync_existing_deactivation_mail_does_not_send_duplicate_alert(tmp_path, monkeypatch) -> None:
+def test_sync_existing_mail_does_not_send_duplicate_notification(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
     telegram = FakeTelegramService()
     service = mails_service_module.MailService(
         repository=repository,
         mail_client=FakeSyncMailClient({
-            "id": "remote-5",
-            "from": ["noreply@openai.com"],
+            "id": "remote-4",
+            "from": ["sender@example.com"],
             "to": ["demo@claw.163.com"],
-            "subject": "OpenAI API - Access Deactivated [test]",
+            "subject": "普通邮件",
         }),
-        alert_service=mail_alerts_module.MailAlertService(repository=repository, telegram_service_value=telegram),
+        alert_service=mail_alerts_module.MailAlertService(telegram_service_value=telegram),
     )
     repository.upsert_mailbox({
         "id": "remote-demo",
@@ -191,9 +167,9 @@ def test_sync_existing_deactivation_mail_does_not_send_duplicate_alert(tmp_path,
     })
     repository.save_mail({
         "connection_id": "conn-1",
-        "provider_mail_id": "remote-5",
+        "provider_mail_id": "remote-4",
         "mailbox_email": "demo@claw.163.com",
-        "subject": "OpenAI API - Access Deactivated [test]",
+        "subject": "普通邮件",
         "raw_json": "{}",
     })
 

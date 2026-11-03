@@ -173,8 +173,8 @@ class MailService:
                 mark_read=False,
             )
             saved_mail = self.repository.save_mail(mail_to_repository_input(normalized_mailbox, mail, connection_id))
-            # 新邮件入库后执行告警，Telegram 失败不影响收件箱同步。
-            self.alert_service.notify_openai_deactivation_if_needed(saved_mail)
+            # Telegram 通知失败不影响收件箱同步。
+            self.alert_service.notify_new_mail(saved_mail)
             sse_hub.broadcast("mail", {
                 "connectionId": connection_id,
                 "mailboxEmail": normalized_mailbox,
