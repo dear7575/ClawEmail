@@ -1,15 +1,22 @@
 import importlib
+from types import SimpleNamespace
+
+from app.services.mail_alerts import format_new_mail_message
 
 
 class FakeTelegramService:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
-        self.messages: list[str] = []
+        self.messages: list[tuple[str, dict]] = []
+        self.settings = SimpleNamespace(message_format="html")
 
-    def send_message(self, text: str) -> None:
+    def get_settings(self):
+        return self.settings
+
+    def send_message(self, text: str, **kwargs) -> None:
         if self.error:
             raise self.error
-        self.messages.append(text)
+        self.messages.append((text, kwargs))
 
 
 class FakeSyncMailClient:
@@ -71,9 +78,10 @@ def test_new_mail_notification_sends_for_any_mail_and_keeps_unread(tmp_path, mon
 
     assert result == {"sent": True}
     assert len(telegram.messages) == 1
-    assert "收到新邮件" in telegram.messages[0]
-    assert "普通邮件主题" in telegram.messages[0]
-    assert "demo@claw.163.com" in telegram.messages[0]
+    assert "收到新邮件" in telegram.messages[0][0]
+    assert "普通邮件主题" in telegram.messages[0][0]
+    assert "demo@claw.163.com" in telegram.messages[0][0]
+    assert telegram.messages[0][1]["parse_mode"] == "HTML"
     assert refreshed["read_at"] is None
 
 
@@ -134,7 +142,7 @@ def test_sync_new_mail_sends_notification_and_broadcasts_event(tmp_path, monkeyp
     saved = repository.get_mail_by_provider_id("demo@claw.163.com", "remote-3", "conn-1")
 
     assert len(telegram.messages) == 1
-    assert "普通邮件" in telegram.messages[0]
+    assert "普通邮件" in telegram.messages[0][0]
     assert saved["read_at"] is None
     assert events == [("mail", {
         "connectionId": "conn-1",
@@ -176,3 +184,26 @@ def test_sync_existing_mail_does_not_send_duplicate_notification(tmp_path, monke
     service.sync_mailbox_inbox("conn-1", "demo@claw.163.com")
 
     assert telegram.messages == []
+
+
+def test_notification_formats_escape_mail_fields_and_add_https_button() -> None:
+    text, parse_mode, keyboard = format_new_mail_message(
+        {"subject": "<img src=x>", "mailbox_email": "demo@example.com"},
+        message_format="html",
+        webhook_base_url="https://mail.example.com/",
+    )
+
+    assert parse_mode == "HTML"
+    assert "&lt;img src=x&gt;" in text
+    assert keyboard == {
+        "inline_keyboard": [[{"text": "打开 ClawEmail", "url": "https://mail.example.com"}]],
+    }
+
+
+def test_notification_omits_button_for_non_https_address() -> None:
+    _text, _parse_mode, keyboard = format_new_mail_message(
+        {"subject": "test"},
+        webhook_base_url="http://mail.example.com",
+    )
+
+    assert keyboard is None

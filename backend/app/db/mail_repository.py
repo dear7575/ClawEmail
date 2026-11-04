@@ -353,6 +353,20 @@ class MailRepository:
         total = count["count"] if count else 0
         return {"items": items, "count": total, "total": total, "limit": limit, "offset": offset}
 
+    def list_recent_mail_summaries(self, limit: int = 5, unread_only: bool = False) -> list[dict[str, Any]]:
+        """列出最近邮件摘要，可选仅返回未读邮件。"""
+
+        unread_clause = "AND read_at IS NULL" if unread_only else ""
+        with self.engine.connect() as connection:
+            rows = connection.execute(text(f"""
+                SELECT id, mailbox_email, source, subject, has_attachments, received_at, created_at
+                FROM mails
+                WHERE 1 = 1 {unread_clause}
+                ORDER BY COALESCE(received_at, created_at) DESC, id DESC
+                LIMIT :limit
+            """), {"limit": max(1, min(limit, 10))}).mappings().all()
+        return [dict(row) for row in rows]
+
     def list_mail_provider_ids(self, mailbox_email: str, connection_id: str | None = None) -> list[str]:
         """列出指定邮箱已缓存的远端邮件 ID。"""
 

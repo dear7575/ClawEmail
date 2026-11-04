@@ -62,7 +62,8 @@ def create_app() -> FastAPI:
     async def admin_authentication(request: Request, call_next):
         """对 /api/ 路径执行后台密码校验。"""
 
-        if request.url.path.startswith("/api/"):
+        is_telegram_webhook = request.url.path == "/api/telegram/webhook"
+        if request.url.path.startswith("/api/") and not is_telegram_webhook:
             header_password = request.headers.get("x-admin-password")
             query_password = request.query_params.get("token")
             if header_password != settings.admin_password and query_password != settings.admin_password:

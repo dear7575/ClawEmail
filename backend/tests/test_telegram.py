@@ -70,6 +70,10 @@ def test_get_telegram_settings_returns_defaults(tmp_path, monkeypatch, test_clie
         "chatId": "",
         "hasBotToken": False,
         "botTokenPreview": None,
+        "webhookBaseUrl": "",
+        "webhookBaseUrlConfigured": False,
+        "messageFormat": "html",
+        "commandsInstalled": False,
     }
 
 
@@ -81,6 +85,7 @@ def test_put_telegram_settings_persists_and_masks_token(tmp_path, monkeypatch, t
         "enabled": True,
         "botToken": " 1234567890abcdef ",
         "chatId": " 1001 ",
+        "webhookBaseUrl": " https://mail.example.com/ ",
     })
 
     assert response.status_code == 200
@@ -89,10 +94,15 @@ def test_put_telegram_settings_persists_and_masks_token(tmp_path, monkeypatch, t
         "chatId": "1001",
         "hasBotToken": True,
         "botTokenPreview": "12345678...cdef",
+        "webhookBaseUrl": "https://mail.example.com/",
+        "webhookBaseUrlConfigured": True,
+        "messageFormat": "html",
+        "commandsInstalled": False,
     }
     assert repository.get("telegram.enabled") == "true"
     assert repository.get("telegram.botToken") == "1234567890abcdef"
     assert repository.get("telegram.chatId") == "1001"
+    assert repository.get("telegram.webhookBaseUrl") == "https://mail.example.com/"
 
 
 def test_put_telegram_settings_preserves_token_when_omitted(tmp_path, monkeypatch, test_client) -> None:

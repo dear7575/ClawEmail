@@ -14,7 +14,18 @@ logger = logging.getLogger(__name__)
 ENABLED_KEY = "telegram.enabled"
 BOT_TOKEN_KEY = "telegram.botToken"
 CHAT_ID_KEY = "telegram.chatId"
+FORMAT_KEY = "telegram.format"
+WEBHOOK_SECRET_KEY = "telegram.webhookSecret"
+WEBHOOK_URL_KEY = "telegram.webhookUrl"
+WEBHOOK_BASE_URL_KEY = "telegram.webhookBaseUrl"
+LAST_UPDATE_KEY = "telegram.lastUpdateId"
 TELEGRAM_API_ORIGIN = "https://api.telegram.org"
+TELEGRAM_COMMANDS = [
+    {"command": "start", "description": "查看邮件助手状态"},
+    {"command": "help", "description": "查看可用命令"},
+    {"command": "latest", "description": "查看最新邮件"},
+    {"command": "unread", "description": "查看未读邮件"},
+]
 
 
 class TelegramSettings(BaseModel):
@@ -23,6 +34,8 @@ class TelegramSettings(BaseModel):
     enabled: bool = False
     chat_id: str = Field(default="", alias="chatId")
     bot_token: str = Field(default="", alias="botToken")
+    message_format: str = Field(default="html", alias="messageFormat")
+    webhook_base_url: str = Field(default="", alias="webhookBaseUrl")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -34,6 +47,10 @@ class TelegramPublicSettings(BaseModel):
     chat_id: str = Field(default="", alias="chatId")
     has_bot_token: bool = Field(default=False, alias="hasBotToken")
     bot_token_preview: str | None = Field(default=None, alias="botTokenPreview")
+    webhook_base_url: str = Field(default="", alias="webhookBaseUrl")
+    webhook_base_url_configured: bool = Field(default=False, alias="webhookBaseUrlConfigured")
+    commands_installed: bool = Field(default=False, alias="commandsInstalled")
+    message_format: str = Field(default="html", alias="messageFormat")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -44,10 +61,12 @@ class TelegramSettingsUpdate(BaseModel):
     enabled: bool | None = None
     bot_token: str | None = Field(default=None, alias="botToken", max_length=200)
     chat_id: str | None = Field(default=None, alias="chatId", max_length=120)
+    webhook_base_url: str | None = Field(default=None, alias="webhookBaseUrl", max_length=500)
+    message_format: str | None = Field(default=None, alias="messageFormat", pattern="^(html|plain)$")
 
     model_config = ConfigDict(populate_by_name=True)
 
-    @field_validator("bot_token", "chat_id")
+    @field_validator("bot_token", "chat_id", "webhook_base_url")
     @classmethod
     def trim_optional_string(cls, value: str | None) -> str | None:
         """去掉可选字符串配置首尾空白。"""
@@ -105,6 +124,8 @@ class TelegramService:
             enabled=(self.repository.get(ENABLED_KEY) or "false") == "true",
             botToken=normalize_string(self.repository.get(BOT_TOKEN_KEY) or settings.telegram_bot_token),
             chatId=normalize_string(self.repository.get(CHAT_ID_KEY) or settings.telegram_chat_id),
+            messageFormat=self.repository.get(FORMAT_KEY) or "html",
+            webhookBaseUrl=normalize_string(self.repository.get(WEBHOOK_BASE_URL_KEY)),
         )
 
     def to_public_settings(self, settings: TelegramSettings | None = None) -> TelegramPublicSettings:
@@ -116,6 +137,10 @@ class TelegramService:
             chatId=current.chat_id,
             hasBotToken=bool(current.bot_token),
             botTokenPreview=mask_bot_token(current.bot_token),
+            messageFormat=current.message_format,
+            webhookBaseUrl=current.webhook_base_url,
+            commandsInstalled=bool(self.repository.get(WEBHOOK_SECRET_KEY)),
+            webhookBaseUrlConfigured=bool(current.webhook_base_url.strip()),
         )
 
     def save_settings(self, update: TelegramSettingsUpdate) -> TelegramPublicSettings:
@@ -129,14 +154,25 @@ class TelegramService:
         """
 
         current = self.get_settings()
+        if self.repository.get(WEBHOOK_SECRET_KEY):
+            changes_bot = update.bot_token is not None and normalize_string(update.bot_token) != current.bot_token
+            changes_chat = update.chat_id is not None and normalize_string(update.chat_id) != current.chat_id
+            changes_webhook = update.webhook_base_url is not None and normalize_string(update.webhook_base_url) != current.webhook_base_url
+            disables_bot = update.enabled is False
+            if changes_bot or changes_chat or changes_webhook or disables_bot:
+                raise ValueError("请先卸载 Telegram 邮件命令，再修改 Bot Token、Chat ID 或停用通知")
         next_settings = TelegramSettings(
             enabled=current.enabled if update.enabled is None else update.enabled,
             botToken=current.bot_token if update.bot_token is None else update.bot_token,
             chatId=current.chat_id if update.chat_id is None else update.chat_id,
+            messageFormat=current.message_format if update.message_format is None else update.message_format,
+            webhookBaseUrl=current.webhook_base_url if update.webhook_base_url is None else update.webhook_base_url,
         )
         self.repository.set(ENABLED_KEY, str(next_settings.enabled).lower())
         self.repository.set(BOT_TOKEN_KEY, next_settings.bot_token)
         self.repository.set(CHAT_ID_KEY, next_settings.chat_id)
+        self.repository.set(FORMAT_KEY, next_settings.message_format)
+        self.repository.set(WEBHOOK_BASE_URL_KEY, next_settings.webhook_base_url)
         logger.info(
             "保存 Telegram 配置：enabled=%s hasBotToken=%s hasChatId=%s",
             next_settings.enabled,
@@ -145,11 +181,39 @@ class TelegramService:
         )
         return self.to_public_settings(next_settings)
 
-    def send_message(self, text: str) -> None:
+    def call_api(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """调用 Telegram Bot API 并校验返回状态。"""
+
+        settings = self.get_settings()
+        if not settings.bot_token:
+            raise ValueError("请先配置 Telegram Bot Token")
+        network_settings = network_settings_service.get()
+        with self.client_factory(
+            timeout=network_settings.timeout_ms / 1000,
+            proxy=network_settings.proxy_url or None,
+        ) as client:
+            response = client.request(
+                "POST",
+                f"{TELEGRAM_API_ORIGIN}/bot{settings.bot_token}/{method}",
+                headers={"content-type": "application/json"},
+                json=payload,
+            )
+        try:
+            body = response.json() if response.text.strip() else None
+        except ValueError:
+            body = None
+        if not response.is_success or not isinstance(body, dict) or body.get("ok") is not True:
+            description = body.get("description") if isinstance(body, dict) else response.reason_phrase
+            raise RuntimeError(f"Telegram API {method} 失败：{description}")
+        return body
+
+    def send_message(self, text: str, parse_mode: str | None = None, reply_markup: dict[str, Any] | None = None) -> None:
         """发送 Telegram 文本消息。
 
         参数:
             text: 已校验的消息文本。
+            parse_mode: 可选的 Telegram 消息解析模式。
+            reply_markup: 可选的 Telegram 按钮布局。
 
         异常:
             ValueError: Telegram 未启用或缺少必要配置。
@@ -181,6 +245,8 @@ class TelegramService:
                 json={
                     "chat_id": settings.chat_id,
                     "text": text,
+                    **({"parse_mode": parse_mode} if parse_mode else {}),
+                    **({"reply_markup": reply_markup} if reply_markup else {}),
                 },
             )
 

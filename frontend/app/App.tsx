@@ -43,9 +43,11 @@ import {
     type MailSummary,
     refreshConnection,
     sendConnectionLoginCode,
+    installTelegramCommands,
     sendTelegramNotification,
     setAdminPassword,
     type TelegramSettings,
+    uninstallTelegramCommands,
     updateDuckAccountToken,
     updateDuckAddress,
     updateDuckAddressOpenAiPassword,
@@ -234,11 +236,18 @@ export function App() {
         enabled: false,
         chatId: "",
         hasBotToken: false,
-        botTokenPreview: null
+        botTokenPreview: null,
+        webhookBaseUrl: "",
+        messageFormat: "html",
+        commandsInstalled: false,
+        webhookBaseUrlConfigured: false
     });
     const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
     const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
     const [telegramChatIdInput, setTelegramChatIdInput] = useState("");
+    const [telegramWebhookBaseUrlInput, setTelegramWebhookBaseUrlInput] = useState("");
+    const [telegramMessageFormatInput, setTelegramMessageFormatInput] = useState<"html" | "plain">("html");
+    const [telegramCommandsBusy, setTelegramCommandsBusy] = useState(false);
     const [settingsBusy, setSettingsBusy] = useState(false);
     const [telegramMessage, setTelegramMessage] = useState("");
     const [telegramSendBusy, setTelegramSendBusy] = useState(false);
@@ -877,6 +886,8 @@ export function App() {
                 updateTelegramSettings({
                     enabled: telegramEnabledInput,
                     chatId: telegramChatIdInput.trim(),
+                    messageFormat: telegramMessageFormatInput,
+                    webhookBaseUrl: telegramWebhookBaseUrlInput.trim(),
                     botToken: telegramBotTokenInput.trim() || undefined
                 })
             ]);
@@ -901,7 +912,9 @@ export function App() {
         setTelegramSettings(settings);
         setTelegramEnabledInput(settings.enabled);
         setTelegramChatIdInput(settings.chatId);
+        setTelegramWebhookBaseUrlInput(settings.webhookBaseUrl);
         setTelegramBotTokenInput("");
+        setTelegramMessageFormatInput(settings.messageFormat);
     }
 
     async function loadTelegramSettings() {
@@ -967,6 +980,24 @@ export function App() {
             reportError(err);
         } finally {
             setDuckAddressEditorBusy(false);
+        }
+    }
+
+    async function handleTelegramCommands(action: "install" | "uninstall") {
+        setTelegramCommandsBusy(true);
+        try {
+            if (action === "install") {
+                await installTelegramCommands();
+                showStatus("Telegram 邮件命令已安装");
+            } else {
+                await uninstallTelegramCommands();
+                showStatus("Telegram 邮件命令已卸载");
+            }
+            await loadTelegramSettings();
+        } catch (err) {
+            reportError(err);
+        } finally {
+            setTelegramCommandsBusy(false);
         }
     }
 
@@ -1759,6 +1790,32 @@ export function App() {
                                     {telegramSettings.enabled ? "已启用" : "未启用"}
                                 </span>
                             </div>
+                            <div className="notify-actions">
+                                <span>
+                                    {telegramSettings.commandsInstalled
+                                        ? "邮件命令已安装：/latest、/unread、/help"
+                                        : telegramSettings.webhookBaseUrlConfigured
+                                            ? "可安装 /latest、/unread、/help 邮件查询命令"
+                                            : "请在系统设置中填写公开 HTTPS 地址"}
+                                </span>
+                                {telegramSettings.commandsInstalled ? (
+                                    <button
+                                        onClick={() => handleTelegramCommands("uninstall")}
+                                        disabled={telegramCommandsBusy}
+                                    >
+                                        {telegramCommandsBusy ? "处理中" : "卸载命令"}
+                                    </button>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={() => handleTelegramCommands("install")}
+                                            disabled={telegramCommandsBusy || !telegramSettings.webhookBaseUrlConfigured || !telegramSettings.enabled || !telegramSettings.hasBotToken || !telegramSettings.chatId}
+                                        >
+                                            {telegramCommandsBusy ? "处理中" : "安装邮件命令"}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                             <textarea
                                 className="notify-textarea"
                                 value={telegramMessage}
@@ -1955,7 +2012,7 @@ export function App() {
                             <label className="setting-row">
                                 <span>
                                     <strong>Telegram 消息通知</strong>
-                                    <small>启用后可在“消息通知”菜单里手动发送内容到 Telegram。</small>
+                                    <small>配置 Bot 后，新收到的邮件会自动发送到指定 Chat；消息通知页可发送自定义文本。</small>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -1988,6 +2045,38 @@ export function App() {
                                     placeholder="Chat ID"
                                     disabled={settingsBusy}
                                 />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Telegram Webhook 公网地址</strong>
+                                    <small>填写外网可访问的 HTTPS 根地址，用于 Bot 命令回调和通知里的跳转按钮。</small>
+                                </span>
+                                <input
+                                    type="url"
+                                    value={telegramWebhookBaseUrlInput}
+                                    onChange={(event) => setTelegramWebhookBaseUrlInput(event.target.value)}
+                                    placeholder="https://mail.example.com"
+                                    disabled={settingsBusy || telegramSettings.commandsInstalled}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>邮件通知格式</strong>
+                                    <small>HTML 会转义邮件字段，并在已配置 Webhook 地址时附带打开 ClawEmail 按钮。</small>
+                                </span>
+                                <Select
+                                    value={telegramMessageFormatInput}
+                                    onValueChange={(value) => setTelegramMessageFormatInput(value as "html" | "plain")}
+                                    disabled={settingsBusy}
+                                >
+                                    <SelectTrigger className="toolbar-select">
+                                        <SelectValue placeholder="通知格式"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="html">富文本</SelectItem>
+                                        <SelectItem value="plain">纯文本</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                             <div className="settings-actions">
                                 <button onClick={() => loadListeners()} disabled={listenerBusy}>

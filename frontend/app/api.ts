@@ -113,6 +113,10 @@ export type TelegramSettings = {
   chatId: string;
   hasBotToken: boolean;
   botTokenPreview: string | null;
+  messageFormat: "html" | "plain";
+  webhookBaseUrl: string;
+  commandsInstalled: boolean;
+  webhookBaseUrlConfigured: boolean;
 };
 
 export type RuntimeMode = "server" | "unknown";
@@ -488,11 +492,21 @@ export async function updateTelegramSettings(input: {
   enabled?: boolean;
   botToken?: string;
   chatId?: string;
+  messageFormat?: "html" | "plain";
+  webhookBaseUrl?: string;
 }): Promise<TelegramSettings> {
   return requestJson<TelegramSettings>("/api/telegram/settings", {
     method: "PUT",
     body: JSON.stringify(input)
   });
+}
+
+export async function installTelegramCommands(): Promise<void> {
+  await requestJson<{ installed: boolean }>("/api/telegram/commands/install", { method: "POST" });
+}
+
+export async function uninstallTelegramCommands(): Promise<void> {
+  await requestJson<{ installed: boolean }>("/api/telegram/commands", { method: "DELETE" });
 }
 
 export async function sendTelegramNotification(text: string): Promise<void> {
