@@ -200,6 +200,15 @@ def test_notification_formats_escape_mail_fields_and_add_https_button() -> None:
     }
 
 
+def test_notification_uses_full_recipient_address() -> None:
+    text, _parse_mode, _keyboard = format_new_mail_message({
+        "mailbox_email": "orders",
+        "address": "orders@example.test",
+    })
+
+    assert "收件邮箱：</b>orders@example.test" in text
+
+
 def test_notification_omits_button_for_non_https_address() -> None:
     _text, _parse_mode, keyboard = format_new_mail_message(
         {"subject": "test"},

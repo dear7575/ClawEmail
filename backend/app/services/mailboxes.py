@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.db.mail_repository import MailRepository, mail_repository
 from app.services.claw_dashboard import ClawDashboardClient, claw_dashboard_client
+from app.services.inbucket import CONNECTION_ID as INBUCKET_CONNECTION_ID, InbucketSettingsService, inbucket_settings_service
 from app.services.listeners import listener_manager
 
 
@@ -40,11 +41,13 @@ class MailboxService:
         self,
         repository: MailRepository = mail_repository,
         dashboard: ClawDashboardClient = claw_dashboard_client,
+        inbucket_settings: InbucketSettingsService = inbucket_settings_service,
     ) -> None:
         """初始化邮箱服务。"""
 
         self.repository = repository
         self.dashboard = dashboard
+        self.inbucket_settings = inbucket_settings
 
     def list(self, connection_id: str | None = None, sync: bool = False) -> list[dict]:
         """列出本地邮箱，必要时先从 Claw Dashboard 同步。
@@ -57,7 +60,7 @@ class MailboxService:
             本地邮箱列表。
         """
 
-        if sync:
+        if sync and connection_id != INBUCKET_CONNECTION_ID:
             logger.info("开始同步 Claw 邮箱列表：connection=%s", connection_id or "all")
             remote_mailboxes = self.dashboard.list_mailboxes(connection_id=connection_id)
             for mailbox in remote_mailboxes:

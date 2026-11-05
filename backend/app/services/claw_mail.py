@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from app.db.claw_repository import ClawRepository, claw_repository
+from app.services.mail_address import normalize_recipient_address
 from app.services.network_settings import NetworkSettingsService, network_settings_service
 
 
@@ -611,7 +612,7 @@ def mail_to_repository_input(mailbox_email: str, mail: dict[str, Any], connectio
         "provider_mail_id": str(mail["id"]),
         "mailbox_email": mailbox_email,
         "source": next(iter(mail.get("from") or []), None),
-        "address": next(iter(mail.get("to") or []), mailbox_email),
+        "address": normalize_recipient_address(next(iter(mail.get("to") or []), mailbox_email)) or mailbox_email,
         "subject": mail.get("subject"),
         "text": mail.get("text", {}).get("content") if isinstance(mail.get("text"), dict) else None,
         "html": mail.get("html", {}).get("content") if isinstance(mail.get("html"), dict) else None,

@@ -2531,6 +2531,53 @@ a:hover {
     text-transform: none;
 }
 
+.mail-group + .mail-group {
+    border-top: 1px solid var(--border-soft);
+}
+
+.mail-group-toggle {
+    width: 100%;
+    min-height: 40px;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0 14px;
+    text-align: left;
+}
+
+.mail-group-toggle:hover {
+    background: var(--muted);
+}
+
+.mail-group-chevron {
+    color: var(--text-3);
+    transition: transform 140ms ease;
+}
+
+.mail-group-chevron.collapsed {
+    transform: rotate(-90deg);
+}
+
+.mail-group-address {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mail-group-count {
+    color: var(--text-3);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .inbox-actions {
     display: flex;
     align-items: center;

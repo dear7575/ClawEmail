@@ -18,6 +18,7 @@ from app.api.claw_auth import router as claw_auth_router
 from app.api.duck import router as duck_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
+from app.api.inbucket import router as inbucket_router
 from app.api.mailboxes import router as mailboxes_router
 from app.api.mails import router as mails_router
 from app.api.send import router as send_router
@@ -25,12 +26,15 @@ from app.api.system import router as system_router
 from app.api.telegram import router as telegram_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services.inbucket import InbucketMonitor, inbucket_settings_service
+from app.services.mails import mail_service
 from app.services.inbox_sync_scheduler import inbox_sync_scheduler
 
 
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger("app.main")
+inbucket_monitor = InbucketMonitor(mail_service.receive_inbucket_event)
 
 
 @asynccontextmanager
@@ -38,9 +42,11 @@ async def lifespan(_app: FastAPI):
     """管理 API 进程级后台任务生命周期。"""
 
     inbox_sync_scheduler.start()
+    inbucket_monitor.start()
     try:
         yield
     finally:
+        inbucket_monitor.shutdown()
         inbox_sync_scheduler.shutdown()
 
 
@@ -49,6 +55,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.include_router(health_router)
+    app.include_router(inbucket_router)
     app.include_router(system_router)
     app.include_router(duck_router)
     app.include_router(telegram_router)

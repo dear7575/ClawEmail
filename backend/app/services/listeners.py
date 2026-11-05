@@ -19,6 +19,7 @@ from app.services.claw_im import (
 from app.services.claw_mail import ClawMailClient, attachment_list, claw_mail_client
 from app.services.listener_settings import listener_settings_service
 from app.services.mail_alerts import MailAlertService, mail_alert_service
+from app.services.mail_address import normalize_recipient_address
 from app.services.sse import sse_hub
 
 
@@ -261,7 +262,7 @@ class ListenerManager:
                 "provider_mail_id": provider_mail_id,
                 "mailbox_email": state.email,
                 "source": next(iter(mail.get("from") or []), None),
-                "address": next(iter(mail.get("to") or []), state.email),
+                "address": normalize_recipient_address(next(iter(mail.get("to") or []), state.email)) or state.email,
                 "subject": mail.get("subject"),
                 "text": mail.get("text", {}).get("content") if isinstance(mail.get("text"), dict) else None,
                 "html": mail.get("html", {}).get("content") if isinstance(mail.get("html"), dict) else None,

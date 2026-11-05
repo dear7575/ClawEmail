@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { clearMails, deleteMail, markMailsRead, replyMail, type MailDetail, type MailSummary } from "../api";
 import { useResizableWidth } from "../hooks";
 import { plural, usePrefs } from "../i18n";
@@ -21,6 +22,7 @@ type Props = {
   onSelectMail: (id: number) => void;
   onRefresh: () => void;
   refreshing?: boolean;
+  replyUnavailable?: boolean;
   onMarkedRead: (updated: number, msg: string) => void;
   onCleared: (deleted: number, failed: number, msg: string) => void;
   onDeleted: (id: number, msg: string) => void;
@@ -28,6 +30,12 @@ type Props = {
   onError: (msg: string) => void;
   adminPassword: string;
 };
+
+function recipientAddress(value: string | null | undefined): string {
+  const raw = value?.trim() || "";
+  const addresses = Array.from(raw.matchAll(/<\s*([^<>]+?)\s*>/g), (match) => match[1].trim()).filter(Boolean);
+  return addresses.length ? addresses.join(", ") : raw.replace(/^[<\s]+|[>\s]+$/g, "");
+}
 
 function fmtTime(value: string | null, source: "mail" | "db" = "db"): string {
   if (!value) return "—";
@@ -68,6 +76,7 @@ export function InboxView({
   onSelectMail,
   onRefresh,
   refreshing = false,
+  replyUnavailable = false,
   onMarkedRead,
   onCleared,
   onDeleted,
@@ -91,6 +100,18 @@ export function InboxView({
   const [markReadBusy, setMarkReadBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [expandedMailboxGroups, setExpandedMailboxGroups] = useState<Set<string>>(() => new Set());
+  const groupedMails = useMemo(() => {
+    const groups = new Map<string, {key: string; label: string; items: MailSummary[]}>();
+    for (const mail of mails) {
+      const label = recipientAddress(mail.address) || "—";
+      const key = label.toLowerCase();
+      const group = groups.get(key) ?? {key, label, items: []};
+      group.items.push(mail);
+      groups.set(key, group);
+    }
+    return Array.from(groups.values());
+  }, [mails, t]);
 
   useEffect(() => {
     setDeleteConfirmOpen(false);
@@ -214,27 +235,52 @@ export function InboxView({
               {t("inbox.list.empty.body")}
             </div>
           )}
-          {mails.map((mail) => {
-            const time = mailTime(mail);
-            const unread = !mail.read_at;
+          {groupedMails.map((group) => {
+            const expanded = expandedMailboxGroups.has(group.key);
+            const unreadCount = group.items.filter((mail) => !mail.read_at).length;
             return (
-              <button
-                key={mail.id}
-                className={`mail-row ${selectedMail?.id === mail.id ? "selected" : ""} ${unread ? "unread" : "read"}`}
-                onClick={() => onSelectMail(mail.id)}
-              >
-                <span className="subj">
-                  {mail.subject || t("inbox.subject.empty")}
-                  <span className={`read-badge ${unread ? "unread" : "read"}`}>
-                    {unread ? "未读" : "已读"}
+              <section className="mail-group" key={group.key}>
+                <button
+                  type="button"
+                  className="mail-group-toggle"
+                  onClick={() => setExpandedMailboxGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(group.key)) next.delete(group.key);
+                    else next.add(group.key);
+                    return next;
+                  })}
+                  aria-expanded={expanded}
+                >
+                  <ChevronDown className={expanded ? "mail-group-chevron" : "mail-group-chevron collapsed"} size={15} aria-hidden="true" />
+                  <span className="mail-group-address">{group.label}</span>
+                  <span className="mail-group-count">
+                    {group.items.length} 封{unreadCount ? ` · ${unreadCount} 未读` : ""}
                   </span>
-                </span>
-                <span className="time">{fmtTime(time.value, time.source)}</span>
-                <span className="meta">
-                  <span className="from">{mail.source || t("inbox.unknownSender")}</span>
-                  {mail.has_attachments ? <span className="att">◇</span> : null}
-                </span>
-              </button>
+                </button>
+                {expanded && group.items.map((mail) => {
+                  const time = mailTime(mail);
+                  const unread = !mail.read_at;
+                  return (
+                    <button
+                      key={mail.id}
+                      className={`mail-row ${selectedMail?.id === mail.id ? "selected" : ""} ${unread ? "unread" : "read"}`}
+                      onClick={() => onSelectMail(mail.id)}
+                    >
+                      <span className="subj">
+                        {mail.subject || t("inbox.subject.empty")}
+                        <span className={`read-badge ${unread ? "unread" : "read"}`}>
+                          {unread ? "未读" : "已读"}
+                        </span>
+                      </span>
+                      <span className="time">{fmtTime(time.value, time.source)}</span>
+                      <span className="meta">
+                        <span className="from">{mail.source || t("inbox.unknownSender")}</span>
+                        {mail.has_attachments ? <span className="att">◇</span> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </section>
             );
           })}
         </div>
@@ -280,7 +326,7 @@ export function InboxView({
                 <dt>{t("inbox.detail.from")}</dt>
                 <dd className="mono">{selectedMail.source || "—"}</dd>
                 <dt>{t("inbox.detail.to")}</dt>
-                <dd className="mono">{selectedMail.address || selectedMail.mailbox_email}</dd>
+                <dd className="mono">{recipientAddress(selectedMail.address) || t("time.dash")}</dd>
                 <dt>{t("inbox.detail.at")}</dt>
                 <dd className="mono">{fmtFull(time.value, time.source)}</dd>
               </dl>
@@ -317,36 +363,40 @@ export function InboxView({
               </div>
             )}
 
-            <div className="reply-box">
-              <div className="head">
-                <span className="label">{t("inbox.reply.label")}</span>
-                <span className="opts">
-                  <label>
-                    <input type="checkbox" checked={replyAll} onChange={(event) => setReplyAll(event.target.checked)} />
-                    {t("inbox.reply.all")}
-                  </label>
-                  <label>
-                    <input type="checkbox" checked={replyHtml} onChange={(event) => setReplyHtml(event.target.checked)} />
-                    {t("inbox.reply.html")}
-                  </label>
-                </span>
+            {replyUnavailable ? (
+              <p>Inbucket 不支持从收件管理回复。</p>
+            ) : (
+              <div className="reply-box">
+                <div className="head">
+                  <span className="label">{t("inbox.reply.label")}</span>
+                  <span className="opts">
+                    <label>
+                      <input type="checkbox" checked={replyAll} onChange={(event) => setReplyAll(event.target.checked)} />
+                      {t("inbox.reply.all")}
+                    </label>
+                    <label>
+                      <input type="checkbox" checked={replyHtml} onChange={(event) => setReplyHtml(event.target.checked)} />
+                      {t("inbox.reply.html")}
+                    </label>
+                  </span>
+                </div>
+                <textarea
+                  value={replyBody}
+                  onChange={(event) => setReplyBody(event.target.value)}
+                  placeholder={t("time.dash")}
+                />
+                <div className="row">
+                  <span />
+                  <button
+                    className="primary"
+                    onClick={handleReply}
+                    disabled={!replyBody || replyBusy}
+                  >
+                    {replyBusy ? t("inbox.reply.sending") : t("inbox.reply.dispatch")}
+                  </button>
+                </div>
               </div>
-              <textarea
-                value={replyBody}
-                onChange={(event) => setReplyBody(event.target.value)}
-                placeholder={t("time.dash")}
-              />
-              <div className="row">
-                <span />
-                <button
-                  className="primary"
-                  onClick={handleReply}
-                  disabled={!replyBody || replyBusy}
-                >
-                  {replyBusy ? t("inbox.reply.sending") : t("inbox.reply.dispatch")}
-                </button>
-              </div>
-            </div>
+            )}
           </>
           );
         })()}

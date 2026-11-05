@@ -1,18 +1,32 @@
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.mail_repository import MailRepository, mail_repository, parse_mail_raw_json
 from app.services.claw_mail import ClawMailClient, claw_mail_client, mail_to_repository_input
+from app.services.inbucket import CONNECTION_ID, CONNECTION_ID as INBUCKET_CONNECTION_ID, inbucket_client, inbucket_settings_service
+from app.services.mail_address import normalize_recipient_address
 from app.services.mail_alerts import MailAlertService, mail_alert_service
 from app.services.sse import sse_hub
 
 
 logger = logging.getLogger(__name__)
 SYNC_RECOVERABLE_ERRORS = (RuntimeError, httpx.HTTPError, OSError)
+
+
+def _header_value(headers: object, name: str) -> object | None:
+    if isinstance(headers, dict):
+        return next((value for key, value in headers.items() if str(key).casefold() == name.casefold()), None)
+    if isinstance(headers, list):
+        for header in headers:
+            if isinstance(header, dict) and str(header.get("name", "")).casefold() == name.casefold():
+                return header.get("value")
+    return None
 
 
 class SendMailBody(BaseModel):
@@ -66,12 +80,16 @@ class MailService:
         repository: MailRepository = mail_repository,
         mail_client: ClawMailClient = claw_mail_client,
         alert_service: MailAlertService = mail_alert_service,
+        inbucket_client_value=inbucket_client,
+        inbucket_settings_value=inbucket_settings_service,
     ) -> None:
         """初始化邮件服务。"""
 
         self.repository = repository
         self.mail_client = mail_client
         self.alert_service = alert_service
+        self.inbucket_client = inbucket_client_value
+        self.inbucket_settings = inbucket_settings_value
 
     @staticmethod
     def sync_error_payload(
@@ -143,6 +161,9 @@ class MailService:
         """
 
         normalized_mailbox = mailbox_email.strip().lower()
+        if connection_id == INBUCKET_CONNECTION_ID:
+            self.sync_inbucket_inboxes(normalized_mailbox)
+            return
         if not connection_id:
             mailbox = self.repository.get_mailbox_by_email(normalized_mailbox)
             connection_id = mailbox.get("connection_id") if mailbox else None
@@ -191,12 +212,82 @@ class MailService:
             saved_count,
         )
 
-    def sync_all_mailbox_inboxes(self, connection_id: str | None = None) -> list[dict[str, str | None]]:
-        """同步指定连接下所有本地活跃邮箱的收件箱，单个邮箱失败不阻断整体列表。"""
+    def receive_inbucket_event(self, event: dict) -> None:
+        variant = event.get("variant")
+        identifier = event.get("identifier") or {}
+        header = event.get("header") or {}
+        mailbox = identifier.get("mailbox") or header.get("mailbox") or event.get("mailbox")
+        message_id = identifier.get("id") or header.get("id") or event.get("id")
+        if variant not in (None, "message-stored"):
+            return
+        if not isinstance(mailbox, str) or not isinstance(message_id, str) or not mailbox or not message_id:
+            logger.warning("忽略格式无效的 Inbucket 监控事件")
+            return
+        mailbox = mailbox.strip().lower()
+        if self.repository.get_mail_by_provider_id(mailbox, f"inbucket:{message_id}", CONNECTION_ID):
+            return
+        try:
+            message = self.inbucket_client.read_message(mailbox, message_id)
+            headers = message.get("header") or message.get("headers") or {}
+            body = message.get("body") or {}
+            from_value = message.get("from") or _header_value(headers, "From") or event.get("from") or ""
+            if isinstance(from_value, list):
+                from_value = ", ".join(str(value) for value in from_value)
+            to_header = next((
+                value for key in ("To", "Delivered-To", "X-Original-To")
+                if (value := _header_value(headers, key))
+            ), None)
+            to_value = normalize_recipient_address(to_header or message.get("to") or mailbox) or mailbox
+            text_body = body.get("text", "") if isinstance(body, dict) else ""
+            html_body = body.get("html") if isinstance(body, dict) else None
+            subject = message.get("subject") or _header_value(headers, "Subject") or event.get("subject")
+            if isinstance(subject, list):
+                subject = subject[0] if subject else ""
+            received_at = message.get("date") or message.get("posix-millis") or event.get("posix-millis")
+            if isinstance(received_at, (int, float)):
+                received_at = datetime.fromtimestamp(received_at / 1000, timezone.utc).isoformat()
+            self.repository.upsert_mailbox({
+                "id": f"{CONNECTION_ID}:{mailbox}",
+                "connection_id": CONNECTION_ID,
+                "provider_mailbox_id": mailbox,
+                "email": mailbox,
+                "prefix": mailbox.split("@", 1)[0],
+                "display_name": f"Inbucket: {mailbox}",
+                "status": "active",
+            })
+            saved = self.repository.save_mail({
+                "connection_id": CONNECTION_ID,
+                "provider_mail_id": f"inbucket:{message_id}",
+                "mailbox_email": mailbox,
+                "source": str(from_value),
+                "address": str(to_value),
+                "subject": subject,
+                "text": text_body if isinstance(text_body, str) else str(text_body),
+                "html": html_body if isinstance(html_body, str) else None,
+                "raw_json": json.dumps(message, ensure_ascii=False),
+                "header_raw": None,
+                "has_attachments": bool(message.get("attachments")),
+                "received_at": received_at,
+            })
+            self.alert_service.notify_new_mail(saved)
+            sse_hub.broadcast("mail", {
+                "connectionId": CONNECTION_ID,
+                "mailboxEmail": mailbox,
+                "id": saved["id"],
+                "providerMailId": message_id,
+            })
+        except SYNC_RECOVERABLE_ERRORS as exc:
+            logger.warning("读取 Inbucket 新邮件失败：mailbox=%s message=%s error=%s", mailbox, message_id, exc)
 
+    def sync_inbucket_inboxes(self, mailbox_filter: str | None = None) -> list[dict[str, str | None]]:
+        """Inbucket 邮件由全局监控连接实时接收。"""
+        return []
+
+    def sync_all_mailbox_inboxes(self, connection_id: str | None = None) -> list[dict[str, str | None]]:
+        """同步指定连接下所有本地活跃邮箱及已配置的 Inbucket 邮箱。"""
+
+        errors = self.sync_inbucket_inboxes() if connection_id in (None, CONNECTION_ID) else []
         mailboxes = self.repository.list_active_mailboxes(connection_id)
-        logger.info("开始同步全部邮箱收件箱：connection=%s mailboxCount=%s", connection_id or "all", len(mailboxes))
-        errors: list[dict[str, str | None]] = []
         for mailbox in mailboxes:
             resolved_connection_id = mailbox.get("connection_id") or connection_id
             if not resolved_connection_id:
@@ -259,7 +350,13 @@ class MailService:
             return True
 
         logger.info("开始删除邮件：mailId=%s mailbox=%s providerMailId=%s", mail_id, mail["mailbox_email"], mail["provider_mail_id"])
-        self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
+        if mail.get("connection_id") == INBUCKET_CONNECTION_ID:
+            self.inbucket_client.delete_message(
+                mail["mailbox_email"],
+                mail["provider_mail_id"].removeprefix("inbucket:"),
+            )
+        else:
+            self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
         deleted = self.repository.delete_mail(mail_id)
 
         if deleted:
@@ -283,7 +380,13 @@ class MailService:
         failed = 0
         for mail in mails:
             try:
-                self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
+                if mail.get("connection_id") == INBUCKET_CONNECTION_ID:
+                    self.inbucket_client.delete_message(
+                        mail["mailbox_email"],
+                        mail["provider_mail_id"].removeprefix("inbucket:"),
+                    )
+                else:
+                    self.mail_client.delete_mail(mail["mailbox_email"], mail["provider_mail_id"], mail.get("connection_id"))
             except Exception as exc:
                 logger.warning(
                     "远端删除邮件失败，保留本地缓存：mailId=%s mailbox=%s providerMailId=%s error=%s",

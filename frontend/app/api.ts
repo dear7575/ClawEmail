@@ -71,6 +71,12 @@ export type ListenerSnapshot = {
   error?: string | null;
 };
 
+export type InbucketSettings = {
+  baseUrl: string;
+  username: string;
+  hasPassword: boolean;
+};
+
 export type ListenerSettings = {
   logMode: "quiet" | "lifecycle" | "verbose";
   reconnectMode: "standard" | "slow";
@@ -455,6 +461,21 @@ export async function disconnectClaw(): Promise<ClawAuthStatus> {
 export async function fetchListeners(): Promise<ListenerSnapshot[]> {
   const data = await requestJson<{ items: ListenerSnapshot[] }>("/api/listeners");
   return data.items;
+}
+
+export async function fetchInbucketSettings(): Promise<InbucketSettings> {
+  return requestJson<InbucketSettings>("/api/inbucket/settings");
+}
+
+export async function updateInbucketSettings(input: {
+  baseUrl: string;
+  username: string;
+  password?: string;
+}): Promise<InbucketSettings> {
+  return requestJson<InbucketSettings>("/api/inbucket/settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
 }
 
 export async function fetchListenerSettings(): Promise<ListenerSettings> {

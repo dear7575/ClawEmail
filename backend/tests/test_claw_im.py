@@ -76,7 +76,7 @@ class FakeMailClient:
         return {
             "id": provider_mail_id,
             "from": ["sender@example.com"],
-            "to": [mailbox_email],
+            "to": ["Claw User <recipient@example.test>"],
             "subject": "hello",
             "text": {"content": "body"},
             "html": None,
@@ -108,6 +108,8 @@ async def test_listener_persists_mail_push_and_broadcasts_sse() -> None:
     assert repository.saved[0]["connection_id"] == "conn-1"
     assert repository.saved[0]["provider_mail_id"] == "mail-1"
     assert repository.saved[0]["mailbox_email"] == "root@claw.163.com"
+    assert repository.saved[0]["address"] == "recipient@example.test"
     assert repository.saved[0]["subject"] == "hello"
     assert len(alert_service.mails) == 1
     assert alert_service.mails[0]["id"] == 42
+    assert alert_service.mails[0]["address"] == "recipient@example.test"

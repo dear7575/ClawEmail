@@ -24,6 +24,7 @@ import {
     type DuckAccount,
     type DuckAddress,
     fetchConnections,
+    fetchInbucketSettings,
     fetchDuckAccounts,
     fetchDuckAddressOpenAiPassword,
     fetchDuckAddresses,
@@ -37,6 +38,7 @@ import {
     generateDuckAddress,
     getAdminPassword,
     type ListenerSettings,
+    type InbucketSettings,
     type ListenerSnapshot,
     type Mailbox,
     type MailDetail,
@@ -49,6 +51,7 @@ import {
     type TelegramSettings,
     uninstallTelegramCommands,
     updateDuckAccountToken,
+    updateInbucketSettings,
     updateDuckAddress,
     updateDuckAddressOpenAiPassword,
     updateListenerSettings,
@@ -232,6 +235,10 @@ export function App() {
     });
     const [systemProxyInput, setSystemProxyInput] = useState("");
     const [systemTimeoutInput, setSystemTimeoutInput] = useState("10000");
+    const [inbucketBaseUrlInput, setInbucketBaseUrlInput] = useState("");
+    const [inbucketUsernameInput, setInbucketUsernameInput] = useState("");
+    const [inbucketPasswordInput, setInbucketPasswordInput] = useState("");
+    const [inbucketHasPassword, setInbucketHasPassword] = useState(false);
     const [telegramSettings, setTelegramSettings] = useState<TelegramSettings>({
         enabled: false,
         chatId: "",
@@ -578,6 +585,7 @@ export function App() {
         loadMailboxes().catch(reportError);
         loadServerListenerSettings().catch(reportError);
         loadSystemNetworkSettings().catch(reportError);
+        loadInbucketSettings().catch(reportError);
         loadTelegramSettings().catch(reportError);
         loadDuckAccounts()
             .then(() => fetchDuckAddresses({limit: DEFAULT_LIST_PAGE_SIZE, offset: 0}))
@@ -877,11 +885,16 @@ export function App() {
         }
         setSettingsBusy(true);
         try {
-            const [listenerSaved, networkSaved, telegramSaved] = await Promise.all([
+            const [listenerSaved, networkSaved, inbucketSaved, telegramSaved] = await Promise.all([
                 updateListenerSettings(serverListenerSettings),
                 updateSystemNetworkSettings({
                     proxyUrl: systemProxyInput.trim(),
                     timeoutMs
+                }),
+                updateInbucketSettings({
+                    baseUrl: inbucketBaseUrlInput.trim(),
+                    username: inbucketUsernameInput.trim(),
+                    password: inbucketPasswordInput || undefined
                 }),
                 updateTelegramSettings({
                     enabled: telegramEnabledInput,
@@ -894,6 +907,11 @@ export function App() {
             setServerListenerSettings(listenerSaved);
             setSystemProxyInput(networkSaved.proxyUrl);
             setSystemTimeoutInput(String(networkSaved.timeoutMs));
+            setInbucketBaseUrlInput(inbucketSaved.baseUrl);
+            setInbucketUsernameInput(inbucketSaved.username);
+            setInbucketHasPassword(inbucketSaved.hasPassword);
+            setInbucketPasswordInput("");
+            await loadMailboxes(false);
             applyTelegramSettings(telegramSaved);
             showStatus("系统配置已保存");
         } catch (err) {
@@ -901,6 +919,7 @@ export function App() {
             await Promise.all([
                 loadServerListenerSettings(),
                 loadSystemNetworkSettings(),
+                loadInbucketSettings(),
                 loadTelegramSettings()
             ]);
         } finally {
@@ -915,6 +934,18 @@ export function App() {
         setTelegramWebhookBaseUrlInput(settings.webhookBaseUrl);
         setTelegramBotTokenInput("");
         setTelegramMessageFormatInput(settings.messageFormat);
+    }
+
+    async function loadInbucketSettings() {
+        try {
+            const settings = await fetchInbucketSettings();
+            setInbucketBaseUrlInput(settings.baseUrl);
+            setInbucketUsernameInput(settings.username);
+            setInbucketHasPassword(settings.hasPassword);
+            setInbucketPasswordInput("");
+        } catch (err) {
+            reportError(err);
+        }
     }
 
     async function loadTelegramSettings() {
@@ -1348,7 +1379,9 @@ export function App() {
                                 <SelectContent>
                                     <SelectItem value={ALL_SELECT_VALUE}>全部邮箱</SelectItem>
                                     {activeMailboxes.map((mailbox) => (
-                                        <SelectItem key={mailbox.id} value={mailbox.email}>{mailbox.email}</SelectItem>
+                                        <SelectItem key={mailbox.id} value={mailbox.email}>
+                                            {mailbox.connection_id === "inbucket" ? "IB" : "Claw"} · {mailbox.email}
+                                        </SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
@@ -1738,6 +1771,7 @@ export function App() {
                         onSelectMail={(id) => loadMail(id).catch(reportError)}
                         onRefresh={handleRefreshMails}
                         refreshing={mailRefreshBusy}
+                        replyUnavailable={selectedConnectionId === "inbucket"}
                         onMarkedRead={(updated, msg) => {
                             if (updated > 0) {
                                 const readAt = new Date().toISOString();
@@ -2006,6 +2040,46 @@ export function App() {
                                     step={1000}
                                     value={systemTimeoutInput}
                                     onChange={(event) => setSystemTimeoutInput(event.target.value)}
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>Inbucket 服务地址</strong>
+                                    <small>Inbucket Web 界面的服务地址，例如 http://inbucket:9000。</small>
+                                </span>
+                                <input
+                                    type="url"
+                                    value={inbucketBaseUrlInput}
+                                    onChange={(event) => setInbucketBaseUrlInput(event.target.value)}
+                                    placeholder="http://localhost:9000"
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>NPM 用户名</strong>
+                                    <small>用于访问 Inbucket 的代理访问列表认证。</small>
+                                </span>
+                                <input
+                                    autoComplete="username"
+                                    value={inbucketUsernameInput}
+                                    onChange={(event) => setInbucketUsernameInput(event.target.value)}
+                                    placeholder="用户名"
+                                    disabled={settingsBusy}
+                                />
+                            </div>
+                            <div className="setting-row">
+                                <span>
+                                    <strong>NPM 密码</strong>
+                                    <small>{inbucketHasPassword ? "已配置；留空则保留当前密码。" : "用于访问 Inbucket 的代理访问列表认证。"}</small>
+                                </span>
+                                <input
+                                    type="password"
+                                    autoComplete="new-password"
+                                    value={inbucketPasswordInput}
+                                    onChange={(event) => setInbucketPasswordInput(event.target.value)}
+                                    placeholder={inbucketHasPassword ? "留空则保留当前密码" : "密码"}
                                     disabled={settingsBusy}
                                 />
                             </div>

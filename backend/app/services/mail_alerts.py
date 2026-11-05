@@ -32,7 +32,7 @@ def format_new_mail_message(
     """生成带安全 HTML 格式和收件箱按钮的新邮件通知。"""
 
     values = {
-        "mailbox": compact_text(mail.get("mailbox_email"), 200),
+        "mailbox": compact_text(mail.get("address") or mail.get("mailbox_email"), 200),
         "source": compact_text(mail.get("source"), 300),
         "subject": compact_text(mail.get("subject"), 500),
         "received_at": compact_text(mail.get("received_at") or mail.get("created_at"), 120),
