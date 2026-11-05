@@ -1,6 +1,8 @@
 import importlib
 from types import SimpleNamespace
 
+from sqlalchemy import text
+
 from app.services.mail_alerts import format_new_mail_message
 
 
@@ -108,6 +110,40 @@ def test_new_mail_notification_failure_does_not_raise_or_mark_read(tmp_path, mon
         record.levelname == "ERROR" and "新邮件 Telegram 通知失败" in record.message
         for record in caplog.records
     )
+
+
+def test_failed_telegram_notification_retries_and_clears_job(tmp_path, monkeypatch) -> None:
+    repository, mail_alerts_module, _mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
+    telegram = FakeTelegramService(RuntimeError("tg down"))
+    service = mail_alerts_module.MailAlertService(
+        telegram_service_value=telegram,
+        mail_repository_value=repository,
+    )
+    mail = repository.save_mail({
+        "provider_mail_id": "retry-1",
+        "mailbox_email": "demo@claw.163.com",
+        "subject": "重试通知",
+        "raw_json": "{}",
+    })
+
+    result = service.notify_new_mail(mail)
+
+    assert result["sent"] is False
+    with repository.engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE telegram_notification_jobs SET next_attempt_at = datetime('now', '-1 second')"
+        ))
+    restarted_repository = repository.__class__(engine=repository.engine)
+    due_notifications = restarted_repository.list_due_telegram_notifications()
+    assert len(due_notifications) == 1
+    assert due_notifications[0]["attempts"] == 1
+    service.mail_repository = restarted_repository
+    telegram.error = None
+
+    service.retry_pending_once()
+
+    assert len(telegram.messages) == 1
+    assert restarted_repository.list_due_telegram_notifications() == []
 
 
 def test_sync_new_mail_sends_notification_and_broadcasts_event(tmp_path, monkeypatch) -> None:

@@ -136,7 +136,7 @@ class TelegramBotService:
             mailbox = html.escape(str(mail.get("mailbox_email") or "")[:120])
             received = html.escape(str(mail.get("received_at") or mail.get("created_at") or "")[:64])
             marker = "[附件] " if mail.get("has_attachments") else ""
-            lines.append(f"\n{marker}<b>{subject}</b>\n{sender} → {mailbox}\n{received}")
+            lines.append(f"\n\n{marker}<b>{subject}</b>\n{sender} → {mailbox}\n{received}")
         return "".join(lines)
 
 

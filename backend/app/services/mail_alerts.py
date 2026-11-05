@@ -1,8 +1,10 @@
 import html
 import logging
+import threading
 from typing import Any
 from urllib.parse import urlsplit
 
+from app.db.mail_repository import MailRepository, mail_repository
 from app.db.settings_repository import SettingsRepository, settings_repository
 from app.services.telegram import (
     WEBHOOK_BASE_URL_KEY,
@@ -69,22 +71,78 @@ def format_new_mail_message(
 
 
 class MailAlertService:
-    """邮件通知服务。"""
+    """邮件通知及失败补发服务。"""
+
+    RETRY_POLL_SECONDS = 5
+    INITIAL_RETRY_SECONDS = 30
+    MAX_RETRY_SECONDS = 3600
 
     def __init__(
         self,
         telegram_service_value: TelegramService = telegram_service,
         settings_repository_value: SettingsRepository = settings_repository,
+        mail_repository_value: MailRepository = mail_repository,
     ) -> None:
-        """初始化邮件通知服务。"""
-
         self.telegram_service = telegram_service_value
         self.settings_repository = settings_repository_value
+        self.mail_repository = mail_repository_value
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.lifecycle_lock = threading.Lock()
+        self.send_lock = threading.Lock()
+
+    def start(self) -> None:
+        """启动持久化通知任务的后台重试线程。"""
+
+        with self.lifecycle_lock:
+            if self.thread and self.thread.is_alive():
+                return
+            self.stop_event.clear()
+            self.thread = threading.Thread(target=self._run, name="telegram-notification-retry", daemon=True)
+            self.thread.start()
+            logger.info("Telegram 通知补发调度器已启动")
+
+    def shutdown(self) -> None:
+        """停止通知补发线程。"""
+
+        with self.lifecycle_lock:
+            self.stop_event.set()
+            thread = self.thread
+        if thread and thread.is_alive():
+            thread.join(timeout=5)
+        logger.info("Telegram 通知补发调度器已停止")
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.RETRY_POLL_SECONDS):
+            try:
+                self.retry_pending_once()
+            except Exception as exc:
+                logger.error("Telegram 通知补发轮询失败：error=%s", exc)
 
     def notify_new_mail(self, mail: dict[str, Any]) -> dict[str, Any]:
-        """收到新邮件时发送 Telegram 通知。"""
+        """持久化新邮件通知并立即尝试发送。"""
 
         mail_id = mail.get("id")
+        if mail_id is None:
+            logger.error("新邮件 Telegram 通知未入队：缺少本地邮件 ID")
+            return {"sent": False, "error": "missing mail id"}
+        self.mail_repository.enqueue_telegram_notification(int(mail_id))
+        with self.send_lock:
+            return self._attempt_notification(mail, attempts=0)
+
+    def retry_pending_once(self) -> None:
+        """发送所有到期的持久化通知任务。"""
+
+        if not self.send_lock.acquire(blocking=False):
+            return
+        try:
+            for mail in self.mail_repository.list_due_telegram_notifications():
+                self._attempt_notification(mail, attempts=int(mail.get("attempts") or 0))
+        finally:
+            self.send_lock.release()
+
+    def _attempt_notification(self, mail: dict[str, Any], attempts: int) -> dict[str, Any]:
+        mail_id = int(mail["id"])
         try:
             settings = self.telegram_service.get_settings()
             message, parse_mode, keyboard = format_new_mail_message(
@@ -94,14 +152,20 @@ class MailAlertService:
             )
             self.telegram_service.send_message(message, parse_mode=parse_mode, reply_markup=keyboard)
         except Exception as exc:
+            error_type = type(exc).__name__
+            retry_after = min(self.MAX_RETRY_SECONDS, self.INITIAL_RETRY_SECONDS * (2 ** min(attempts, 7)))
+            self.mail_repository.fail_telegram_notification(mail_id, error_type, retry_after)
             logger.error(
-                "新邮件 Telegram 通知失败：mailId=%s mailbox=%s error=%s",
+                "新邮件 Telegram 通知失败，将补发：mailId=%s mailbox=%s attempts=%s retryAfterSeconds=%s errorType=%s",
                 mail_id,
                 mail.get("mailbox_email"),
-                exc,
+                attempts + 1,
+                retry_after,
+                error_type,
             )
             return {"sent": False, "error": str(exc)}
 
+        self.mail_repository.complete_telegram_notification(mail_id)
         logger.info("新邮件 Telegram 通知已发送：mailId=%s mailbox=%s", mail_id, mail.get("mailbox_email"))
         return {"sent": True}
 

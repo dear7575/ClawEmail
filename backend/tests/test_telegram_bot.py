@@ -113,6 +113,15 @@ def test_commands_reply_only_to_configured_chat_and_dedupe_updates() -> None:
     assert repository.get("telegram.lastUpdateId") == "11"
 
 
+def test_latest_mail_list_separates_messages_with_blank_lines() -> None:
+    messages = TelegramBotService._format_mail_list([
+        {"subject": "First", "source": "one@example.com", "mailbox_email": "a@example.com", "received_at": "10:00"},
+        {"subject": "Second", "source": "two@example.com", "mailbox_email": "b@example.com", "received_at": "09:00"},
+    ], unread_only=False)
+
+    assert "10:00\n\n<b>Second</b>" in messages
+
+
 def test_webhook_requires_both_secrets_without_admin_password(monkeypatch) -> None:
     import app.api.telegram as telegram_api_module
     from app.main import app

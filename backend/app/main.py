@@ -27,6 +27,7 @@ from app.api.telegram import router as telegram_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.inbucket import InbucketMonitor, inbucket_settings_service
+from app.services.mail_alerts import mail_alert_service
 from app.services.mails import mail_service
 from app.services.inbox_sync_scheduler import inbox_sync_scheduler
 
@@ -43,9 +44,11 @@ async def lifespan(_app: FastAPI):
 
     inbox_sync_scheduler.start()
     inbucket_monitor.start()
+    mail_alert_service.start()
     try:
         yield
     finally:
+        mail_alert_service.shutdown()
         inbucket_monitor.shutdown()
         inbox_sync_scheduler.shutdown()
 

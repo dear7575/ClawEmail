@@ -83,6 +83,19 @@ def ensure_mail_tables(engine: Engine) -> None:
             )
         """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_attachments_mail_id ON attachments(mail_id)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS telegram_notification_jobs (
+              mail_id INTEGER PRIMARY KEY,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              last_error TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_notification_jobs_due "
+            "ON telegram_notification_jobs(next_attempt_at)"
+        ))
 
 
 class MailRepository:
@@ -248,6 +261,13 @@ class MailRepository:
 
         connection_id = input_value.get("connection_id") or LEGACY_CONNECTION_ID
         with self.engine.begin() as connection:
+            existing = connection.execute(text("""
+                SELECT id FROM mails
+                WHERE mailbox_email = :mailbox_email AND provider_mail_id = :provider_mail_id
+            """), {
+                "mailbox_email": input_value["mailbox_email"],
+                "provider_mail_id": input_value["provider_mail_id"],
+            }).first()
             connection.execute(text("""
                 INSERT INTO mails
                   (
@@ -295,6 +315,11 @@ class MailRepository:
                 "provider_mail_id": input_value["provider_mail_id"],
             }).mappings().first()
             mail = dict(row) if row else {}
+            if not existing:
+                connection.execute(text("""
+                    INSERT OR IGNORE INTO telegram_notification_jobs (mail_id)
+                    VALUES (:mail_id)
+                """), {"mail_id": mail["id"]})
             connection.execute(text("DELETE FROM attachments WHERE mail_id = :mail_id"), {"mail_id": mail["id"]})
             for attachment in input_value.get("attachments") or []:
                 connection.execute(text("""
@@ -423,9 +448,60 @@ class MailRepository:
                 if connection_id:
                     where += " AND connection_id = :connection_id"
                     params["connection_id"] = connection_id
+                connection.execute(text(f"""
+                    DELETE FROM telegram_notification_jobs
+                    WHERE mail_id IN (SELECT id FROM mails WHERE {where})
+                """), params)
                 result = connection.execute(text(f"DELETE FROM mails WHERE {where}"), params)
                 deleted += result.rowcount
         return deleted
+
+    def list_due_telegram_notifications(self, limit: int = 20) -> list[dict[str, Any]]:
+        """读取到期通知任务及对应邮件。"""
+
+        with self.engine.connect() as connection:
+            rows = connection.execute(text("""
+                SELECT j.attempts, m.*
+                FROM telegram_notification_jobs AS j
+                JOIN mails AS m ON m.id = j.mail_id
+                WHERE j.next_attempt_at <= CURRENT_TIMESTAMP
+                ORDER BY j.next_attempt_at ASC, j.mail_id ASC
+                LIMIT :limit
+            """), {"limit": max(1, min(limit, 100))}).mappings().all()
+        return [dict(row) for row in rows]
+
+    def complete_telegram_notification(self, mail_id: int) -> None:
+        """移除已成功发送的通知任务。"""
+
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "DELETE FROM telegram_notification_jobs WHERE mail_id = :mail_id"
+            ), {"mail_id": mail_id})
+
+    def fail_telegram_notification(self, mail_id: int, error: str, retry_after_seconds: int) -> None:
+        """记录发送失败并安排下一次尝试。"""
+
+        with self.engine.begin() as connection:
+            connection.execute(text("""
+                UPDATE telegram_notification_jobs
+                SET attempts = attempts + 1,
+                    next_attempt_at = datetime('now', :retry_modifier),
+                    last_error = :last_error
+                WHERE mail_id = :mail_id
+            """), {
+                "mail_id": mail_id,
+                "retry_modifier": f"+{max(1, retry_after_seconds)} seconds",
+                "last_error": error[:1000],
+            })
+
+    def enqueue_telegram_notification(self, mail_id: int) -> None:
+        """确保邮件存在对应的待发送通知任务。"""
+
+        with self.engine.begin() as connection:
+            connection.execute(text("""
+                INSERT OR IGNORE INTO telegram_notification_jobs (mail_id)
+                SELECT id FROM mails WHERE id = :mail_id
+            """), {"mail_id": mail_id})
 
     def list_mails_for_deletion(self, connection_id: str | None = None, mailbox_email: str | None = None) -> list[dict[str, Any]]:
         """列出准备执行远端删除的本地邮件。"""
@@ -497,6 +573,9 @@ class MailRepository:
         """删除本地邮件缓存。"""
 
         with self.engine.begin() as connection:
+            connection.execute(text(
+                "DELETE FROM telegram_notification_jobs WHERE mail_id = :id"
+            ), {"id": mail_id})
             result = connection.execute(text("DELETE FROM mails WHERE id = :id"), {"id": mail_id})
         return result.rowcount > 0
 
@@ -517,6 +596,9 @@ class MailRepository:
         mailbox_count = len(self.list_mailboxes(connection_id=connection_id, include_deleted=True))
         with self.engine.begin() as connection:
             for mail in mails:
+                connection.execute(text("DELETE FROM telegram_notification_jobs WHERE mail_id = :mail_id"), {
+                    "mail_id": mail["id"],
+                })
                 connection.execute(text("DELETE FROM attachments WHERE mail_id = :mail_id"), {"mail_id": mail["id"]})
             mail_result = connection.execute(
                 text("DELETE FROM mails WHERE connection_id = :connection_id"),
