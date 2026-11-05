@@ -94,7 +94,7 @@ class MailAlertService:
             )
             self.telegram_service.send_message(message, parse_mode=parse_mode, reply_markup=keyboard)
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 "新邮件 Telegram 通知失败：mailId=%s mailbox=%s error=%s",
                 mail_id,
                 mail.get("mailbox_email"),

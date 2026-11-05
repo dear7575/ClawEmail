@@ -121,7 +121,15 @@ def test_put_telegram_settings_preserves_token_when_omitted(tmp_path, monkeypatc
 
 
 def test_send_telegram_message_posts_to_telegram(tmp_path, monkeypatch, test_client) -> None:
+    from types import SimpleNamespace
+    import app.services.telegram as telegram_module
+
     repository, calls = reset_telegram_service(tmp_path, monkeypatch, [httpx.Response(200, json={"ok": True})])
+    monkeypatch.setattr(
+        telegram_module.network_settings_service,
+        "get",
+        lambda: SimpleNamespace(proxy_url="http://proxy.example.test:7890", timeout_ms=10000),
+    )
     repository.set("telegram.enabled", "true")
     repository.set("telegram.botToken", "token")
     repository.set("telegram.chatId", "chat")
@@ -135,6 +143,7 @@ def test_send_telegram_message_posts_to_telegram(tmp_path, monkeypatch, test_cli
     assert calls[0]["url"] == "https://api.telegram.org/bottoken/sendMessage"
     assert calls[0]["headers"] == {"content-type": "application/json"}
     assert calls[0]["json"] == {"chat_id": "chat", "text": "hello"}
+    assert calls[0]["kwargs"]["proxy"] == "http://proxy.example.test:7890"
 
 
 def test_send_telegram_message_requires_enabled(tmp_path, monkeypatch, test_client) -> None:
