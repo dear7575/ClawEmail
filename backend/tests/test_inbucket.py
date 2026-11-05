@@ -141,7 +141,7 @@ def test_inbucket_client_uses_basic_auth_for_rest_requests(monkeypatch) -> None:
             self.values[key] = value
 
     class FakeNetworkSettings:
-        proxy_url = ""
+        proxy_url = "http://proxy.example.test:7890"
         timeout_ms = 10000
 
     class FakeResponse:
@@ -177,7 +177,53 @@ def test_inbucket_client_uses_basic_auth_for_rest_requests(monkeypatch) -> None:
 
     assert client.read_message("orders", "mail-1") == {"id": "mail-1"}
     assert calls["options"]["auth"] == ("proxy-user", "proxy-secret")
+    assert calls["options"]["proxy"] is None
+    assert calls["options"]["trust_env"] is False
     assert calls["url"] == "https://mail.example.test/api/v1/mailbox/orders/mail-1"
+
+
+def test_inbucket_monitor_bypasses_system_proxy(monkeypatch) -> None:
+    from app.services import inbucket as inbucket_module
+
+    calls: dict = {}
+    monitor = inbucket_module.InbucketMonitor(lambda _message: None)
+
+    class FakeInbucketSettingsService:
+        def get(self):
+            return inbucket_module.InbucketSettings(baseUrl="http://inbucket:9000")
+
+        def credentials(self):
+            return "", ""
+
+    class FakeNetworkSettings:
+        proxy_url = "http://proxy.example.test:7890"
+        timeout_ms = 1000
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def recv(self, timeout: float):
+            monitor.stop_event.set()
+            monitor.wake_event.set()
+            raise TimeoutError
+
+    def fake_connect(url: str, **kwargs):
+        calls["url"] = url
+        calls.update(kwargs)
+        return FakeSocket()
+
+    monkeypatch.setattr(inbucket_module, "inbucket_settings_service", FakeInbucketSettingsService())
+    monkeypatch.setattr(inbucket_module.network_settings_service, "get", lambda: FakeNetworkSettings())
+    monkeypatch.setattr(inbucket_module, "connect", fake_connect)
+
+    monitor._run()
+
+    assert calls["url"] == "ws://inbucket:9000/api/v2/monitor/messages"
+    assert calls["proxy"] is None
 
 
 def test_inbucket_settings_api_persists_but_never_returns_password(test_client, monkeypatch) -> None:
