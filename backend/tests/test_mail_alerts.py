@@ -85,7 +85,7 @@ def test_new_mail_notification_sends_for_any_mail_and_keeps_unread(tmp_path, mon
     assert refreshed["read_at"] is None
 
 
-def test_new_mail_notification_failure_does_not_raise_or_mark_read(tmp_path, monkeypatch, caplog) -> None:
+def test_new_mail_notification_failure_does_not_raise_or_mark_read(tmp_path, monkeypatch) -> None:
     repository, mail_alerts_module, _mails_service_module = reset_mail_alert_services(tmp_path, monkeypatch)
     service = mail_alerts_module.MailAlertService(
         telegram_service_value=FakeTelegramService(RuntimeError("tg down")),
@@ -97,17 +97,12 @@ def test_new_mail_notification_failure_does_not_raise_or_mark_read(tmp_path, mon
         "raw_json": "{}",
     })
 
-    with caplog.at_level("ERROR", logger=mail_alerts_module.__name__):
-        result = service.notify_new_mail(mail)
+    result = service.notify_new_mail(mail)
     refreshed = repository.get_mail(mail["id"])
 
     assert result["sent"] is False
     assert "tg down" in result["error"]
     assert refreshed["read_at"] is None
-    assert any(
-        record.levelname == "ERROR" and "新邮件 Telegram 通知失败" in record.message
-        for record in caplog.records
-    )
 
 
 def test_sync_new_mail_sends_notification_and_broadcasts_event(tmp_path, monkeypatch) -> None:

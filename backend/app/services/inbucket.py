@@ -106,8 +106,7 @@ class InbucketClient:
         credentials = self.settings_service.credentials()
         return {
             "timeout": network.timeout_ms / 1000,
-            "proxy": None,
-            "trust_env": False,
+            "proxy": network.proxy_url or None,
             "auth": credentials if any(credentials) else None,
         }
 
@@ -178,7 +177,7 @@ class InbucketMonitor:
                 with connect(
                     f"{url}/api/v2/monitor/messages",
                     additional_headers={"Authorization": f"Basic {token}"} if username or password else None,
-                    proxy=None,
+                    proxy=network.proxy_url or None,
                     open_timeout=network.timeout_ms / 1000,
                     max_size=2**20,
                 ) as socket:
